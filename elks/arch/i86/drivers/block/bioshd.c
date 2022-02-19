@@ -156,7 +156,8 @@ static struct gendisk bioshd_gendisk = {
     NULL			/* next */
 };
 
-static struct drive_infot *cache_drive;
+//static struct drive_infot *cache_drive;
+struct drive_infot *cache_drive;
 
 static void set_cache_invalid(void)
 {
