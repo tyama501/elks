@@ -27,8 +27,15 @@
 
 #include <arch/system.h>
 
+#include "blk.h"
+
 #define NR_SECTS(p)	p->nr_sects
 #define START_SECT(p)	p->start_sect
+#ifdef CONFIG_ARCH_PC98
+#define NR_SECTS_PC98(p98)	END_SECT_PC98(p98) - START_SECT_PC98(p98) + 1
+#define START_SECT_PC98(p98)	(sector_t) (p98->cyl * cache_drive->heads + p98->head) * cache_drive->sectors + p98->sector
+#define END_SECT_PC98(p98)	(sector_t) (p98->end_cyl * cache_drive->heads + p98->end_head) * cache_drive->sectors + p98->end_sector
+#endif
 
 struct gendisk *gendisk_head = NULL;
 int boot_partition = 0;		/* MBR boot partition, if any*/
@@ -198,11 +205,16 @@ static void INITPROC extended_partition(register struct gendisk *hd, kdev_t dev)
     unmap_brelse(bh);
 }
 
+extern struct drive_infot *cache_drive;
+
 static int INITPROC msdos_partition(struct gendisk *hd,
 			   kdev_t dev, sector_t first_sector)
 {
     struct buffer_head *bh;
     register struct partition *p;
+#ifdef CONFIG_ARCH_PC98
+    struct partition_pc98 *p98;
+#endif
     register struct hd_struct *hdp;
     unsigned short int i, minor = current_minor;
 
@@ -260,6 +272,40 @@ out:
 		hdp->nr_sects = 2;
 	}
     }
+
+#ifdef CONFIG_ARCH_PC98
+    if (*(unsigned short *) (bh->b_data + 0x4) == 0x5049 &&
+        *(unsigned short *) (bh->b_data + 0x6) == 0x314C) {
+	printk(" pc-98 IPL1");
+	current_minor -= 4;
+	minor = current_minor;
+	p98 = (struct partition_pc98 *) (bh->b_data + 0x200);
+	current_minor += 4;
+	for (i = 1; i <= 4; minor++, i++, p98++) {
+	    hdp = &hd->part[minor];
+	    if (!START_SECT_PC98(p98))
+	        continue;
+
+	    printk("\n");
+	    printk("boot_ind : %d ", (int) p98->boot_ind);
+	    printk("active : %d ", (int) p98->active);
+	    printk("dummy : %d\n", p98->dummy);
+	    printk("ipl_sector : %d ", (int) p98->ipl_sector);
+	    printk("ipl_head : %d ", (int) p98->ipl_head);
+	    printk("ipl_cyl : %d\n", p98->ipl_cyl);
+	    printk("sector : %d ", (int) p98->sector);
+	    printk("head : %d ", (int) p98->head);
+	    printk("cyl : %d\n", p98->cyl);
+	    printk("end_sector : %d ", (int) p98->end_sector);
+	    printk("end_head : %d ", (int) p98->end_head);
+	    printk("end_cyl : %d\n", p98->end_cyl);
+
+	    printk(" C: %d H: %d S: %d \n", cache_drive->cylinders, cache_drive->heads, cache_drive->sectors);
+	    printk(" %lu %lu %lu \n", first_sector, START_SECT_PC98(p98), NR_SECTS_PC98(p98));
+	    add_partition(hd, minor, first_sector + START_SECT_PC98(p98), NR_SECTS_PC98(p98));
+	}
+    }
+#endif
     printk("\n");
     unmap_brelse(bh);
     return 1;
