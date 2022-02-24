@@ -83,6 +83,8 @@ hd:
 	push %dx
 	and $0xC0,%dl
 	mov %dl,%ch      // MSBits of cylinder number
+	rol %ch
+	rol %ch
 	pop %dx
 	and $0x3F,%dl
 	dec %dl
