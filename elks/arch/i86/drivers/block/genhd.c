@@ -282,26 +282,9 @@ out:
 	p98 = (struct partition_pc98 *) (bh->b_data + 0x200);
 	current_minor += 4;
 	for (i = 1; i <= 4; minor++, i++, p98++) {
-	    hdp = &hd->part[minor];
 	    if (!START_SECT_PC98(p98))
 	        continue;
 
-	    printk("\n");
-	    printk("boot_ind : %d ", (int) p98->boot_ind);
-	    printk("active : %d ", (int) p98->active);
-	    printk("dummy : %d\n", p98->dummy);
-	    printk("ipl_sector : %d ", (int) p98->ipl_sector);
-	    printk("ipl_head : %d ", (int) p98->ipl_head);
-	    printk("ipl_cyl : %d\n", p98->ipl_cyl);
-	    printk("sector : %d ", (int) p98->sector);
-	    printk("head : %d ", (int) p98->head);
-	    printk("cyl : %d\n", p98->cyl);
-	    printk("end_sector : %d ", (int) p98->end_sector);
-	    printk("end_head : %d ", (int) p98->end_head);
-	    printk("end_cyl : %d\n", p98->end_cyl);
-
-	    printk(" C: %d H: %d S: %d \n", cache_drive->cylinders, cache_drive->heads, cache_drive->sectors);
-	    printk(" %lu %lu %lu \n", first_sector, START_SECT_PC98(p98), NR_SECTS_PC98(p98));
 	    add_partition(hd, minor, first_sector + START_SECT_PC98(p98), NR_SECTS_PC98(p98));
 	}
     }
