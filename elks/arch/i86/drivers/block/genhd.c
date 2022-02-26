@@ -33,8 +33,8 @@
 #define START_SECT(p)	p->start_sect
 #ifdef CONFIG_ARCH_PC98
 #define NR_SECTS_PC98(p98)	END_SECT_PC98(p98) - START_SECT_PC98(p98) + 1
-#define START_SECT_PC98(p98)	(sector_t) (p98->cyl * cache_drive->heads + p98->head) * cache_drive->sectors + p98->sector
-#define END_SECT_PC98(p98)	(sector_t) (p98->end_cyl * cache_drive->heads + p98->end_head) * cache_drive->sectors + p98->end_sector
+#define START_SECT_PC98(p98)	(sector_t) (p98->cyl * last_drive->heads + p98->head) * last_drive->sectors + p98->sector
+#define END_SECT_PC98(p98)	(sector_t) (p98->end_cyl * last_drive->heads + p98->end_head) * last_drive->sectors + p98->end_sector
 #endif
 
 struct gendisk *gendisk_head = NULL;
@@ -204,8 +204,6 @@ static void INITPROC extended_partition(register struct gendisk *hd, kdev_t dev)
   done:
     unmap_brelse(bh);
 }
-
-extern struct drive_infot *cache_drive;
 
 static int INITPROC msdos_partition(struct gendisk *hd,
 			   kdev_t dev, sector_t first_sector)
