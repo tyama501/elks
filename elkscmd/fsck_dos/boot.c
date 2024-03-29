@@ -59,11 +59,6 @@ readboot(dosfs, boot)
                 exit(2);
 	}
 
-	if (block[510] != 0x55 || block[511] != 0xaa) {
-		pfatal("Invalid signature in boot block: %02x%02x", block[511], block[510]);
-                exit(2);
-	}
-
 	memset(boot, 0, sizeof *boot);
 	boot->ValidFat = -1;
 
@@ -83,8 +78,12 @@ readboot(dosfs, boot)
 
 	boot->FATsecs = boot->FATsmall;
 
-	if(boot->BytesPerSec == 0){
-		perror("Not valide BytesPerSec");
+	if ((boot->BytesPerSec != 512) && (boot->BytesPerSec != 1024)) {
+		perror("Invalid DOS format, bad bytes per sector");
+		exit(2);
+	}
+	if ((boot->BytesPerSec == 512) && (block[510] != 0x55 || block[511] != 0xaa)) {
+		pfatal("Invalid signature in boot block: %02x%02x", block[511], block[510]);
 		exit(2);
 	}
 
