@@ -110,6 +110,8 @@ void host_draw(int x, int y) {
     ny = gxyc.y;
 
     if (gmode) {
+        y = 199 - y;
+
         if (nx < x)
             ydiff = (y - ny) / (x - nx);
         else if (nx > x)
@@ -124,17 +126,17 @@ void host_draw(int x, int y) {
                 if (ny < nydiff) {
                     while (ny < nydiff) {
                         ny++;
-                        host_plot(nx, ny);
+                        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                     }
                 }
                 else if (ny > nydiff) {
                     while (ny > nydiff) {
                         ny--;
-                        host_plot(nx, ny);
+                        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                     }
                 }
                 else
-                    host_plot(nx, ny);
+                    int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
             }
         }
         else if (nx > x) {
@@ -144,35 +146,37 @@ void host_draw(int x, int y) {
                 if (ny < nydiff) {
                     while (ny < nydiff) {
                         ny++;
-                        host_plot(nx, ny);
+                        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                     }
                 }
                 else if (ny > nydiff) {
                     while (ny > nydiff) {
                         ny--;
-                        host_plot(nx, ny);
+                        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                     }
                 }
                 else
-                    host_plot(nx, ny);
+                    int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
             }
         }
         else if (nx == x) {
             if (ny < y) {
                 while (ny < y) {
                     ny++;
-                    host_plot(nx, ny);
+                    int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                 }
             }
             else if (ny > y) {
                 while (ny > y) {
                     ny--;
-                    host_plot(nx, ny);
+                    int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                 }
             }
         }
+        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, x, y);
 
-        host_plot(x, y);
+        gxyc.x = x;
+        gxyc.y = y;
     }
 }
 
