@@ -1,5 +1,5 @@
 /*
- * Architecture Specific stubs
+ * Architecture Specific routines for CGA
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +49,11 @@ void int_10(unsigned int ax, unsigned int bx,
                       "pop %bp;"
                       "pop %es;"
                       "pop %ds;");
+}
+#else
+void int_10(unsigned int ax, unsigned int bx,
+            unsigned int cx, unsigned int dx)
+{
 }
 #endif
 
@@ -154,15 +159,15 @@ void host_draw(int x, int y) {
                         for (ni = 0; ni < (nydiff >> 2); ni++) {
                             ny++;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                            nydiff -= (nydiff >> 2);
                         }
+                        nydiff &= 0x0003;
                     }
                     else if (ny > y) {
                         for (ni = 0; ni < (nydiff >> 2); ni++) {
                             ny--;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                            nydiff -= (nydiff >> 2);
                         }
+                        nydiff &= 0x0003;
                     }
                     else
                         int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
@@ -176,15 +181,15 @@ void host_draw(int x, int y) {
                         for (ni = 0; ni < (nydiff >> 2); ni++) {
                             ny++;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                            nydiff -= (nydiff >> 2);
                         }
+                        nydiff &= 0x0003;
                     }
                     else if (ny > y) {
                         for (ni = 0; ni < (nydiff >> 2); ni++) {
                             ny--;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                            nydiff -= (nydiff >> 2);
                         }
+                        nydiff &= 0x0003;
                     }
                     else
                         int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
@@ -214,15 +219,15 @@ void host_draw(int x, int y) {
                         for (ni = 0; ni < (nxdiff >> 2); ni++) {
                             nx++;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                            nxdiff -= (nxdiff >> 2);
                         }
+                        nxdiff &= 0x0003;
                     }
                     else if (nx > x) {
                         for (ni = 0; ni < (nxdiff >> 2); ni++) {
                             nx--;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                            nxdiff -= (nxdiff >> 2);
                         }
+                        nxdiff &= 0x0003;
                     }
                     else
                         int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
@@ -236,15 +241,15 @@ void host_draw(int x, int y) {
                         for (ni = 0; ni < (nxdiff >> 2); ni++) {
                             nx++;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                            nxdiff -= (nxdiff >> 2);
                         }
+                        nxdiff &= 0x0003;
                     }
                     else if (nx > x) {
                         for (ni = 0; ni < (nxdiff >> 2); ni++) {
                             nx--;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                            nxdiff -= (nxdiff >> 2);
                         }
+                        nxdiff &= 0x0003;
                     }
                     else
                         int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
