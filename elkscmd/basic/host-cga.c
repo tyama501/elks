@@ -108,10 +108,11 @@ void host_draw(int x, int y) {
 
     int nx;
     int ny;
-    int xdiff;
-    int ydiff;
-    int nxdiff;
-    int nydiff;
+    unsigned int fdiff;
+    unsigned int xdiff;
+    unsigned int ydiff;
+    unsigned int nxdiff;
+    unsigned int nydiff;
     int ni;
 
     nx = gxyc.x;
@@ -126,28 +127,44 @@ void host_draw(int x, int y) {
         nydiff = 0;
 
         if ((nx < x) && (ny < y)) {
-            if ((y - ny) > (x - nx))
-               ydiff = (y - ny) * 4 / (x - nx);    // binary fraction 2bits
-            else
-               xdiff = (x - nx) * 4 / (y - ny);
+            if ((y - ny) > (x - nx)) {
+                fdiff = (y - ny) << 7;                         // binary fraction 7bits
+                ydiff = (unsigned int) (fdiff / (x - nx));    // maximum slope is 511.992...
+            }
+            else {
+                fdiff = (x - nx) << 7;
+                xdiff = (unsigned int) (fdiff / (y - ny));
+            }
         }
         else if ((nx > x) && (ny < y)) {
-            if ((y - ny) > (x - nx))
-               ydiff = (y - ny) * 4 / (nx - x);
-            else
-               xdiff = (nx - x) * 4 / (y - ny);
+            if ((y - ny) > (nx - x)) {
+                fdiff = (y - ny) << 7;
+                ydiff = (unsigned int) (fdiff / (nx - x));
+            }
+            else {
+                fdiff = (nx - x) << 7;
+                xdiff = (unsigned int) (fdiff /(y - ny));
+            }
         }
         else if ((nx < x) && (ny > y)) {
-            if ((ny - y) > (x - nx))
-               ydiff = (ny - y) * 4 / (x - nx);
-            else
-               xdiff = (x - nx) * 4 / (ny - y);
+            if ((ny - y) > (x - nx)) {
+                fdiff = (ny - y) << 7;
+                ydiff = (unsigned int) (fdiff /(x - nx));
+            }
+            else {
+                fdiff = (x - nx) << 7;
+                xdiff = (unsigned int) (fdiff /(ny - y));
+            }
         }
         else if ((nx > x) && (ny > y)) {
-            if ((ny - y) > (x - nx))
-               ydiff = (ny - y) * 4 / (nx - x);
-            else
-               xdiff = (nx - x) * 4 / (ny - y);
+            if ((ny - y) > (nx - x)) {
+                fdiff = (ny - y) << 7;
+                ydiff = (unsigned int) (fdiff /(nx - x));
+            }
+            else {
+                fdiff = (nx - x) << 7;
+                xdiff = (unsigned int) (fdiff /(ny - y));
+            }
         }
 
         if (xdiff == 0) {
@@ -156,18 +173,18 @@ void host_draw(int x, int y) {
                     nx++;
                     nydiff += ydiff;
                     if (ny < y) {
-                        for (ni = 0; ni < (nydiff >> 2); ni++) {
+                        for (ni = 0; ni < (nydiff >> 7); ni++) {
                             ny++;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                         }
-                        nydiff &= 0x0003;
+                        nydiff &= 0x007F;
                     }
                     else if (ny > y) {
-                        for (ni = 0; ni < (nydiff >> 2); ni++) {
+                        for (ni = 0; ni < (nydiff >> 7); ni++) {
                             ny--;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                         }
-                        nydiff &= 0x0003;
+                        nydiff &= 0x007F;
                     }
                     else
                         int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
@@ -178,18 +195,18 @@ void host_draw(int x, int y) {
                     nx--;
                     nydiff += ydiff;
                     if (ny < y) {
-                        for (ni = 0; ni < (nydiff >> 2); ni++) {
+                        for (ni = 0; ni < (nydiff >> 7); ni++) {
                             ny++;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                         }
-                        nydiff &= 0x0003;
+                        nydiff &= 0x007F;
                     }
                     else if (ny > y) {
-                        for (ni = 0; ni < (nydiff >> 2); ni++) {
+                        for (ni = 0; ni < (nydiff >> 7); ni++) {
                             ny--;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                         }
-                        nydiff &= 0x0003;
+                        nydiff &= 0x007F;
                     }
                     else
                         int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
@@ -216,18 +233,18 @@ void host_draw(int x, int y) {
                     ny++;
                     nxdiff += xdiff;
                     if (nx < x) {
-                        for (ni = 0; ni < (nxdiff >> 2); ni++) {
+                        for (ni = 0; ni < (nxdiff >> 7); ni++) {
                             nx++;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                         }
-                        nxdiff &= 0x0003;
+                        nxdiff &= 0x007F;
                     }
                     else if (nx > x) {
-                        for (ni = 0; ni < (nxdiff >> 2); ni++) {
+                        for (ni = 0; ni < (nxdiff >> 7); ni++) {
                             nx--;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                         }
-                        nxdiff &= 0x0003;
+                        nxdiff &= 0x007F;
                     }
                     else
                         int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
@@ -238,18 +255,18 @@ void host_draw(int x, int y) {
                     ny--;
                     nxdiff += xdiff;
                     if (nx < x) {
-                        for (ni = 0; ni < (nxdiff >> 2); ni++) {
+                        for (ni = 0; ni < (nxdiff >> 7); ni++) {
                             nx++;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                         }
-                        nxdiff &= 0x0003;
+                        nxdiff &= 0x007F;
                     }
                     else if (nx > x) {
-                        for (ni = 0; ni < (nxdiff >> 2); ni++) {
+                        for (ni = 0; ni < (nxdiff >> 7); ni++) {
                             nx--;
                             int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
                         }
-                        nxdiff &= 0x0003;
+                        nxdiff &= 0x007F;
                     }
                     else
                         int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
