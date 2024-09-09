@@ -50,6 +50,29 @@ void int_10(unsigned int ax, unsigned int bx,
                       "pop %es;"
                       "pop %ds;");
 }
+
+void memclrw(unsigned int offset, seg_t seg, unsigned int count)
+{
+    __asm__ volatile ("push %ds;"
+                      "push %es;"
+                      "push %bp;"
+                      "push %si;"
+                      "push %di;");
+    __asm__ volatile ("mov %%ax,%%di;"
+                      "mov %%bx,%%es;"
+                      "xor %%ax,%%ax;"
+                      "cld;"
+                      "rep;"
+                      "stosw;"
+                      :
+                      :"a" (offset), "b" (seg), "c" (count)
+                      :"memory", "cc");
+    __asm__ volatile ("pop %di;"
+                      "pop %si;"
+                      "pop %bp;"
+                      "pop %es;"
+                      "pop %ds;");
+}
 #else
 void int_10(unsigned int ax, unsigned int bx,
             unsigned int cx, unsigned int dx)
@@ -81,7 +104,15 @@ void host_mode(int mode) {
 }
 
 void host_cls() {
-    fprintf(outfile, "\033[H\033[2J");
+
+    if (gmode) {
+#if __ia16__
+        memclrw(0, 0xB800, 4000);
+        memclrw(0, 0xBA00, 4000);
+#endif
+    }
+    else
+        fprintf(outfile, "\033[H\033[2J");
 }
 
 void host_color(int fgc, int bgc) {
