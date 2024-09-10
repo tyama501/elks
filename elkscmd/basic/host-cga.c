@@ -1,5 +1,6 @@
 /*
  * Architecture Specific routines for CGA
+ * Sep 2024 Takahiro Yamada
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +21,7 @@
 extern FILE *outfile;
 
 static int gmode = 0;
+static int exit_on = 0;
 
 typedef struct {
     int x;
@@ -78,6 +80,10 @@ void int_10(unsigned int ax, unsigned int bx,
             unsigned int cx, unsigned int dx)
 {
 }
+
+void memclrw(unsigned int offset, seg_t seg, unsigned int count)
+{
+}
 #endif
 
 void host_digitalWrite(int pin,int state) {
@@ -97,6 +103,11 @@ void host_pinMode(int pin,int mode) {
 void host_mode(int mode) {
     gmode = mode;
 
+    if (gmode && !exit_on) {
+        atexit(host_exit);
+        exit_on = 1;
+    }
+
     if (gmode)
         int_10(VIDEO_05_G320x200, 0, 0, 0);
     else
@@ -106,10 +117,8 @@ void host_mode(int mode) {
 void host_cls() {
 
     if (gmode) {
-#if __ia16__
         memclrw(0, 0xB800, 4000);
         memclrw(0, 0xBA00, 4000);
-#endif
     }
     else
         fprintf(outfile, "\033[H\033[2J");
@@ -342,4 +351,9 @@ int host_inpb(int port) {
 
 int host_inpw(int port) {
     return inw(port);
+}
+
+void host_exit() {
+    if (gmode)
+        int_10(VIDEO_03_T80x25, 0, 0, 0);
 }
