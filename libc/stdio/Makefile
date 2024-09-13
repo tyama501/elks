@@ -53,8 +53,15 @@ OBJS = \
 
 all: $(LIB)
 
+FIXOMF := $(shell which fixomf)
+
 $(LIB): $(LIBOBJS)
 	$(RM) $@
+ifeq "$(COMPILER)" "watcom"
+ifdef FIXOMF
+	fixomf -w dtostr_,ptostr_ vfprintf.obj
+endif
+endif
 	$(AR) $(ARFLAGS_SUB) $@ $(LIBOBJS)
 
 clean:

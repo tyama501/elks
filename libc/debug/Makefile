@@ -11,6 +11,7 @@ OBJS = \
 	syms.o \
 	stacktrace.o \
 	printreg.o \
+	prectimer.o \
 	# end of list
 
 #OBJS += rdtsc.o

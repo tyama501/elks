@@ -85,6 +85,7 @@ void kfork_proc(void (*addr)())
     t = find_empty_process();
 
     t->t_xregs.cs = kernel_cs;                  /* Run in kernel space */
+    /* All other t_regs values invalid for idle task or handlers interrupting idle task */
     t->t_regs.ds = t->t_regs.es = t->t_regs.ss = kernel_ds;
     if (addr)
         arch_build_stack(t, addr);
@@ -186,7 +187,7 @@ void arch_setup_sighandler_stack(register struct task_struct *t,
  * with IP pointing to ret_from_syscall, and current->t_xregs.ksp pointing
  * to si on the kernel stack. Values for the child stack si, di and bp can
  * be anything because their final value will be taken from the task structure
- * in the case of fork(), or will be initialized at the begining of the target
+ * in the case of fork(), or will be initialized at the beginning of the target
  * function in the case of kfork_proc().
  */
 
