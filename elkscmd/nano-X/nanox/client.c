@@ -10,14 +10,14 @@
 #include <unistd.h>
 #include <string.h>
 #include <signal.h>
-#ifndef __linux__ 
-#include <linuxmt/socket.h>
+//#ifndef __linux__
+//#include <linuxmt/socket.h>
 #include <linuxmt/un.h>
-#else
+//#else
 #include <sys/socket.h>
-#include <sys/un.h>
+//#include <sys/un.h>
 #include <sys/select.h>
-#endif
+//#endif
 #include "nano-X.h"
 #include "serv.h"
 
@@ -105,7 +105,7 @@ static int GrSendBlock(void *b, long n)
 			z = GrReadByte();
 			if(z == -1) return -1;
 printf("client bad GrSendBlock\r\n");
-			raise(z);
+//raise(z);
 		}
 		else if(i == GrRetErrorPending)
 			if(GrDeliverErrorEvent() == -1) return -1;

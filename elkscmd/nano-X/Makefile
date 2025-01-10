@@ -19,6 +19,8 @@ NANOXDEMOS += bin/nxtetris
 NANOXDEMOS += bin/nxdemo
 #NANOXDEMOS += bin/nxdemo2
 #NANOXDEMOS += bin/nxvgatest		# low-level vga routines test
+#NANOXDEMOS += bin/nanowm
+#NANOXDEMOS += bin/npanel
 
 # mouse and kbd drivers
 # SLOW_CPU discards unprocessed mouse input for slow systems
@@ -61,17 +63,19 @@ endif
 
 # The following line links the nano-X application with the server.
 # This is required if no network is present, or for speed or debugging.
-LINK_APP_INTO_SERVER=1
+#LINK_APP_INTO_SERVER=1
 
 NANOXFILES = nanox/srvmain.o nanox/srvfunc.o nanox/srvutil.o nanox/srvevent.o
 CLNTFILES = nanox/client.o
 NETFILES = nanox/srvnet.o
 STUBFILES = nanox/stubs.o
+#WMFILES = nanox/wmaction.o nanox/wmclients.o nanox/wmevents.o nanox/wmutil.o
 
 ifdef LINK_APP_INTO_SERVER
 CFLAGS += -DNONETWORK=1
 NANOXFILES += $(STUBFILES)
 ALL += salibs $(NANOXDEMOS)
+#ALL += salibs wmlibs $(NANOXDEMOS)
 else
 NANOXFILES += $(NETFILES)
 DEMOLIBS += libnano-X.a
@@ -92,6 +96,8 @@ libnano-X.a: $(CLNTFILES)
 	$(AR) rc libnano-X.a $(CLNTFILES)
 
 salibs: $(SERVFILES) $(NANOXFILES)
+
+#wmlibs: $(WMFILES)
 
 bin/nxlandmine: demos/landmine.o $(NANOXFILES) $(SERVFILES)
 	$(LD) $(LDFLAGS) $(NANOXFILES) demos/landmine.o $(SERVFILES) $(NANOLIBS) $(LIBS) -o bin/nxlandmine $(MATHLIB) $(LDLIBS)
@@ -121,21 +127,26 @@ bin/nxdemo2: demos/demo2.o $(NANOXFILES) $(SERVFILES)
 bin/nxvgatest: demos/demo-vga.o
 	$(LD) $(LDFLAGS) demos/demo-vga.o $(DRIVERS) $(LIBS) -o bin/nxvgatest $(MATHLIB) $(LDLIBS)
 
+#bin/nanowm: demos/nanowm.o $(NANOXFILES) $(SERVFILES) $(WMFILES)
+#	$(LD) $(LDFLAGS) $(NANOXFILES) demos/nanowm.o $(SERVFILES) $(WMFILES) $#(NANOLIBS) $(LIBS) -o bin/nanowm $(MATHLIB) $(LDLIBS)
+
+#bin/npanel: demos/npanel.o $(NANOXFILES) $(SERVFILES)
+#	$(LD) $(LDFLAGS) $(NANOXFILES) demos/npanel.o $(SERVFILES) $(NANOLIBS) $(LIBS) -o bin/nanowm $(MATHLIB) $(LDLIBS)
 
 #
 # client/server
 #
 nano-X: $(SERVFILES) $(NANOXFILES)
-	$(LD) $(LDFLAGS) $(NANOXFILES) $(SERVFILES) $(NANOLIBS) $(LIBS) -o bin/nano-X $(MATHLIB) $(LDFLAGS)
+	$(LD) $(LDFLAGS) $(NANOXFILES) $(SERVFILES) $(NANOLIBS) $(LIBS) -o bin/nano-X $(MATHLIB) $(LDLIBS)
 
 # only a few demos work in client/server mode
-nxdemos: libnano-X.a
-	$(LD) $(LDFLAGS) demos/demo.o $(DEMOLIBS) -o bin/demo $(MATHLIB) $(LDFLAGS)
-	$(LD) $(LDFLAGS) demos/demo2.o $(DEMOLIBS) -o bin/demo2 $(MATHLIB) $(LDFLAGS)
-	$(LD) $(LDFLAGS) demos/landmine.o $(DEMOLIBS) -o bin/landmine $(MATHLIB) $(LDFLAGS)
-#	$(LD) $(LDFLAGS) demos/nterm.o $(DEMOLIBS) -o bin/nterm $(MATHLIB)	 $(LDFLAGS)
-#	$(LD) $(LDFLAGS) demos/nclock.o $(DEMOLIBS) -o bin/nclock $(MATHLIB)	 $(LDFLAGS)
-#	$(LD) $(LDFLAGS) demos/world.o $(DEMOLIBS) -o bin/world $(MATHLIB) $(LDFLAGS)
+nxdemos: libnano-X.a demos/demo.o demos/demo2.o demos/landmine.o
+	$(LD) $(LDFLAGS) demos/demo.o $(DEMOLIBS) -o bin/demo $(MATHLIB) $(LDLIBS)
+	$(LD) $(LDFLAGS) demos/demo2.o $(DEMOLIBS) -o bin/demo2 $(MATHLIB) $(LDLIBS)
+	$(LD) $(LDFLAGS) demos/landmine.o $(DEMOLIBS) -o bin/landmine $(MATHLIB) $(LDLIBS)
+#	$(LD) $(LDFLAGS) demos/nterm.o $(DEMOLIBS) -o bin/nterm $(MATHLIB)	 $(LDLIBS)
+#	$(LD) $(LDFLAGS) demos/nclock.o $(DEMOLIBS) -o bin/nclock $(MATHLIB)	 $(LDLIBS)
+#	$(LD) $(LDFLAGS) demos/world.o $(DEMOLIBS) -o bin/world $(MATHLIB) $(LDLIBS)
 #	cp demos/demo.sh bin/demo.sh
 
 install: $(NANOXDEMOS)

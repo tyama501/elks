@@ -14,13 +14,13 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
-#ifndef __linux__ 
-#include <linuxmt/socket.h>
+//#ifndef __linux__
+//#include <linuxmt/socket.h>
 #include <linuxmt/un.h>
-#else
+//#else
 #include <sys/socket.h>
-#include <sys/un.h>
-#endif
+//#include <sys/un.h>
+//#endif
 #include <sys/stat.h>
 #include "serv.h"
 
@@ -440,8 +440,13 @@ void GsGetNextEventWrapper(void)
 {
 	GR_EVENT evt;
 
+	// Temporary
+	//GR_TIMEOUT timeout = GR_TIMEOUT_BLOCK;
+	GR_TIMEOUT timeout = GR_TIMEOUT_POLL;
+
 	/* first check if any event ready*/
-	GsCheckNextEvent(&evt);
+	//GsCheckNextEvent(&evt);
+	GsCheckNextEvent(&evt, timeout);
 	if(evt.type == GR_EVENT_TYPE_NONE) {
 		/* tell main loop to call Finish routine on event*/
 		curclient->waiting_for_event = TRUE;
@@ -460,9 +465,14 @@ void GsGetNextEventWrapperFinish(void)
 {
 	GR_EVENT evt;
 
+	// Temporary
+	//GR_TIMEOUT timeout = GR_TIMEOUT_BLOCK;
+	GR_TIMEOUT timeout = GR_TIMEOUT_POLL;
+
 	/* get the event and pass it to client*/
 	/* this will never be GR_EVENT_TYPE_NONE*/
-	GsCheckNextEvent(&evt);
+	//GsCheckNextEvent(&evt);
+	GsCheckNextEvent(&evt, timeout);
 
 	GsPutCh(current_fd, GrRetDataFollows);
 
@@ -473,7 +483,12 @@ void GsCheckNextEventWrapper(void)
 {
 	GR_EVENT evt;
 
-	GsCheckNextEvent(&evt);
+	// Temporary
+	//GR_TIMEOUT timeout = GR_TIMEOUT_BLOCK;
+	GR_TIMEOUT timeout = GR_TIMEOUT_POLL;
+
+	//GsCheckNextEvent(&evt);
+	GsCheckNextEvent(&evt, timeout);
 
 	GsPutCh(current_fd, GrRetDataFollows);
 
