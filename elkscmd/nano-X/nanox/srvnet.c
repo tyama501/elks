@@ -458,6 +458,29 @@ void GsGetNextEventWrapper(void)
 	GsWrite(current_fd, (void *) &evt, sizeof(evt));
 }
 
+void GsGetNextEventTimeoutWrapper(void)
+{
+	GR_EVENT evt;
+
+	GR_TIMEOUT timeout;
+
+	if(GsRead(current_fd, (void *) &timeout, sizeof(timeout)))
+		return;
+
+	/* first check if any event ready*/
+	//GsCheckNextEvent(&evt);
+	GsCheckNextEvent(&evt, timeout);
+	if(evt.type == GR_EVENT_TYPE_NONE) {
+		/* tell main loop to call Finish routine on event*/
+		curclient->waiting_for_event = TRUE;
+		return;
+	}
+
+	GsPutCh(current_fd, GrRetDataFollows);
+
+	GsWrite(current_fd, (void *) &evt, sizeof(evt));
+}
+
 /* Complete the GrGetNextEvent call from client.
  * The client is still waiting on a read at this point.
  */
@@ -1350,7 +1373,8 @@ struct GrFunction {
 	{GsBitmapWrapper, "GsBitmap"},
 	{GsTextWrapper, "GsText"},
 	{GsSetCursorWrapper, "GsSetCursor"},
-	{GsMoveCursorWrapper, "GsMoveCursor"}
+	{GsMoveCursorWrapper, "GsMoveCursor"},
+	{GsGetNextEventTimeoutWrapper, "GsGetNextEventTimeout"},
 };
 
 /*

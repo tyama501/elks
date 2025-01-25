@@ -412,7 +412,8 @@ extern	GR_FONT_INFO	curfont;		/* current font information */
 #define GrNumText               43
 #define GrNumSetCursor          44
 #define GrNumMoveCursor         45
-#define GrTotalNumCalls         46
+#define GrNumGetNextEventTimeout 46
+#define GrTotalNumCalls         47
 
 /*
  * The values the server can return in response to a command.
