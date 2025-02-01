@@ -411,8 +411,12 @@ int GrGetNextEventTimeout(GR_EVENT *ep, GR_TIMEOUT timeout)
 		/* send a byte requesting an event check,
 		 * wait till event exists
 		 */
-		if(GrSendByte(GrNumGetNextEventTimeout) != GrRetDataFollows)
+		if(GrSendByte(GrNumGetNextEventTimeout) != GrRetSendData)
 			return -1;
+
+		if(GrSendBlock(&timeout, sizeof(timeout)) != GrRetDataFollows)
+			return -1;
+
 
 readevent:
 		/* this will never be GR_EVENT_IDLE

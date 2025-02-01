@@ -464,6 +464,8 @@ void GsGetNextEventTimeoutWrapper(void)
 
 	GR_TIMEOUT timeout;
 
+	GsPutCh(current_fd, GrRetSendData);
+
 	if(GsRead(current_fd, (void *) &timeout, sizeof(timeout)))
 		return;
 
