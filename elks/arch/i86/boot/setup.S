@@ -1040,6 +1040,9 @@ continue:
 	pop	%cx
 	pop	%bx
 	pop	%ax
+	mov 	$0x3,%al
+	cmp	%al,%cs:MFM1024
+	jne	notfd1232
 	mov	mem_kbytes,%ax	// Kbytes of memory
 	mov	$6,%cl		// to paras
 	shl	%cl,%ax
