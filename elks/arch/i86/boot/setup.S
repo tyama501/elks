@@ -1467,6 +1467,8 @@ arch_set_initseg:
 // mov $'\n',%ax
 // call putc
 
+
+
    push %es
    mov $INITSEG,%ax
    mov %ax,%es
@@ -1479,6 +1481,14 @@ arch_set_initseg:
    pop %es
 
    call	getcpu                  // implemented in cputype.S
+
+ mov $0x29,%dx
+ mov $4,%al	;//DMA ch0,1,2,3 1MlapMode
+dmasetting:
+ out %al,%dx
+ inc %al
+ cmp $0x7,%al
+ jbe dmasetting
 
    xor %ax,%ax                  // get xms size in CX
    mov %ax,%ds
