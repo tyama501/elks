@@ -671,7 +671,6 @@ ftext_reloc:
 	jmp ftext_reloc
 2:
 	mov -16(%bp),%cx // data reloc size
-
 data_reloc:
 	jcxz 3f
 //	mov $'d',%ax
@@ -692,9 +691,8 @@ data_reloc:
 
 // Load registers as kernel expects
 	mov -22(%bp),%ax   // kernel .data segment
-	mov %ax,%es	//この後ろの1byteが01hに破壊されてる SS:047Ehの破壊だった
+	mov %ax,%es
 	mov %ax,%ds
-
 	mov -2(%bp),%bx    // code size
 	mov -4(%bp),%si    // data size
 	mov -6(%bp),%dx    // bss size
@@ -714,7 +712,6 @@ data_reloc:
 	.hex4sp	%si,".data size:"
 	.hex4sp	%ax,"\nJump CS:"
 	.hex4sp	%cx,"entry:"
-
 	.if debug_output
 	.ifeq serial_output // if not serial output
 	mov $debug_prompt,%ax
@@ -728,16 +725,6 @@ data_reloc:
 	.endif
 	.endif
 
-#ifdef CONFIG_ARCH_PC98
-	.ifeq debug_output
-	.ifeq serial_output // if not serial output
-	mov $debug_prompt,%ax
-	call csputs
-	xor %ah,%ah         // read key press
-	int $0x18
-	.endif
-	.endif
-#endif
 	lret               // jump to REL_SYSSEG:_start to start kernel
 
 // Relocate segment at ES: from relocation record at DS:SI
@@ -814,7 +801,7 @@ puts:	lodsb
 	jnz	1b
 	ret
 
-//.if debug_output
+.if debug_output
 // Write AL to console, convert LF -> CR LF
 putcc:	cmp	$'\n',%al
 	jnz	1f
@@ -838,7 +825,7 @@ csputs:	push	%bx
 
 debug_prompt:
 	.ascii	"\r\nPress key to boot: \0"
-//.endif
+.endif
 
 // Output hex nibble, byte and word. All registers saved.
 hex1:	push %ax
@@ -1063,10 +1050,10 @@ notfd1232:
 memsize:
 	mov	%ax,%es		// ES = boot sector w/BPB
 	// set DS = boot sector buffer (rootdir) address in high memory
-cmpb	$0x3,%cs:MFM1024
-jnz	1f
+	cmpb	$0x3,%cs:MFM1024
+	jnz	1f
 	add	$0x40,%ax	// buffer follows boot block in high mem
-jmp	2f
+	jmp	2f
 1:
 	add	$0x20,%ax	// buffer follows boot block in high mem
 2:
@@ -1123,8 +1110,7 @@ pc98_int1b:
 	pop	%es
 	pop	%ds
 	ret
-MFM1024:
-.byte 0
+
 
 // BPB offsets in boot sector already in high memory
 sec_per_clus	= 13
@@ -1228,17 +1214,6 @@ getchs:
 	xor	%dx,%dx
 	add	%es:sect_offset,%ax	// sect_offset
 	adc	%es:sect_offset+2,%dx	// DX:AX = disk LBA
-push	%ax
-mov	$' ',%ax
-call	putc
-mov	$'D',%ax
-call	putc
-mov	%dx,%ax
-call	hex4
-mov	$':',%ax
-call	putc
-pop	%ax
-call	hex4
 	div	%bx			// AX = cylinder, DX = head
 #ifdef CONFIG_ARCH_PC98
 	mov	%ax,%cx			// PC-98 cylinder
@@ -1415,7 +1390,8 @@ putc:
 //		arch_get_mem
 
 #ifdef CONFIG_ARCH_PC98
-
+MFM1024:
+.byte 0
 // Return total memory in Kbytes
 arch_get_mem:
 #if SETUP_MEM_KBYTES_ASM
@@ -1467,8 +1443,6 @@ arch_set_initseg:
 // mov $'\n',%ax
 // call putc
 
-
-
    push %es
    mov $INITSEG,%ax
    mov %ax,%es
@@ -1481,14 +1455,6 @@ arch_set_initseg:
    pop %es
 
    call	getcpu                  // implemented in cputype.S
-
- mov $0x29,%dx
- mov $4,%al	;//DMA ch0,1,2,3 1MlapMode
-dmasetting:
- out %al,%dx
- inc %al
- cmp $0x7,%al
- jbe dmasetting
 
    xor %ax,%ax                  // get xms size in CX
    mov %ax,%ds
@@ -1537,13 +1503,13 @@ putc:
    cmp $'\n',%al
    jz putesc_n
    xor %ah,%ah
-xor %di,%di
-mov %di,%es
-mov $0x501,%bx
+   xor %di,%di
+   mov %di,%es
+   mov $0x501,%bx
    mov $0xe000,%dx
-mov $8,%di
-test %di,%es:(%bx)
-jne HiTvram
+   mov $8,%di
+   test %di,%es:(%bx)
+   jne HiTvram
    mov $0xa000,%dx
 HiTvram:
    mov %dx,%es
@@ -1586,6 +1552,7 @@ tvram_x:
 
 // include code to enable/verify A20 address gate
 #include "../lib/a20-pc98.inc"
+
 #endif /* CONFIG_ARCH_PC98 */
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
