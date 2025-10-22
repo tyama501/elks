@@ -234,7 +234,7 @@ static void BFPROC probe_floppy(int target, struct hd_struct *hdp)
                 bios_switch_device98(target, 0x10, drivep);  /* 720 KB */
                 if (read_sector(target, track_probe[count] - 1, 1))
                     bios_switch_device98(target, 0x90, drivep);  /* 1.232 MB */
-               else
+                else
                     pc98_720KB = 1;
             }
         } while (++count < sizeof(track_probe)/sizeof(track_probe[0]));
