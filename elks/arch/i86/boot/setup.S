@@ -289,6 +289,7 @@ start_os:
 // Set various INITSEG values used by kernel SETUP_xxx defines (see config.h)
 
 	call	arch_set_initseg
+
 // End of shared setup code
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
@@ -426,6 +427,7 @@ size_error:
 	movsw
 
 // Rebase CS DS ES SS to work in the 64K segment
+
 	mov %es,%ax
 	mov %ax,%ss   // automatic CLI for next instruction
 	xor %sp,%sp
@@ -457,6 +459,7 @@ _next1:
 
 	rep
 	movsw
+
 // Check system header
 
 	mov	$SYSSEG,%ax
@@ -532,6 +535,7 @@ sys_hdr_good:
 	.ifeq debug_output
 	call hex4sp
 	.endif
+
 	mov -2(%bp),%cx  // code size in bytes
 	add %dx,%ax      // add code paragraphs = .fartext start
 	jnc 1f		 // skip if didn't overflow (no HMA)
@@ -552,6 +556,7 @@ sys_hdr_good:
 	movsb
 
 // Relocate kernel far text
+
 	cmp $0x04,%bx    // extended header?
 	jne sys_no_far_text
 	mov $SYSSEG,%ax  // readdress a.out header
@@ -637,6 +642,7 @@ sys_no_far_text:
 
 	rep
 	movsb
+
 // Handle code/far text/data segment relocation
 
 	pop %si          // get src ptr at fartext
@@ -670,6 +676,7 @@ ftext_reloc:
 	add $8,%si
 	jmp ftext_reloc
 2:
+
 	mov -16(%bp),%cx // data reloc size
 data_reloc:
 	jcxz 3f
@@ -690,6 +697,7 @@ data_reloc:
 //	call putc
 
 // Load registers as kernel expects
+
 	mov -22(%bp),%ax   // kernel .data segment
 	mov %ax,%es
 	mov %ax,%ds
@@ -1049,6 +1057,7 @@ notfd1232:
 #endif
 memsize:
 	mov	%ax,%es		// ES = boot sector w/BPB
+
 	// set DS = boot sector buffer (rootdir) address in high memory
 	cmpb	$0x3,%cs:MFM1024
 	jnz	1f
@@ -1102,6 +1111,7 @@ pc98_int1b:
 	mov	$0x0202,%ax	// BIOS read disk, 2 sectors
 	int	$0x13		// BIOS disk interrupt
 #endif
+
 	jnc	1f
 0:	mov	$'F',%al
 	jmp	2f
@@ -1186,6 +1196,7 @@ find:	add	$0x20,%si		// look for /bootopts in root directory at DS:SI
 2:
 	shr	%cl,%ax			// AX = # sectors of root directory
 	add	%bx,%ax			// AX = sector of /bootopts file
+
 	pop	%es
 	ret
 
@@ -1266,6 +1277,7 @@ getchs:
 	mov	%cl,%al
 	call	hex2
 #endif
+
 	ret
 
 // check for hma=kernel in /bootopts, return AX = 0 if not
