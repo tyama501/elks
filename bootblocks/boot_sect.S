@@ -23,7 +23,6 @@
 #define SECTOR_SIZE	1024
 #else
 #define SECTOR_SIZE	512
-//#define MEMTOPSEG	0xA000		// 640K memory
 #define MEMTOPSEG	0x8000		// 512K memory
 #endif
 
@@ -100,14 +99,14 @@ entry1:
 	mov $6,%cl
 	shl %cl,%ax
 #else
- #ifdef MEMTOPSEG
+#ifdef MEMTOPSEG
 	mov $MEMTOPSEG,%ax
- #else
+#else
 	int $0x12   // in KB
 	mov $6,%cl  // to paragraphs
 	shl %cl,%ax
- #endif //MEMTOPSEG
-#endif  //FD1232
+#endif
+#endif
 	// Move to the highest & aligned 64K
 
 	// Some BIOSes are intolerant to unaligned buffer for INT 13h
@@ -254,7 +253,7 @@ _reboot1:
 	int $0x16
 #endif
 	ljmpw $0xffff,$0  // do a cold(er) boot
-#endif //fd1232
+#endif
 
 //------------------------------------------------------------------------------
 
@@ -448,7 +447,6 @@ dr_try:
 #if defined(CONFIG_IMG_FD1232)
 	mov $0x03,%ch    // 1024 Bytes per sector
 	inc %dl          // sector number for PC_98
-//#elif defined(CONFIG_IMG_FD1440)
 #else
 	mov $0x02,%ch    // 512 Bytes per sector
 	inc %dl          // sector number for PC_98
@@ -562,6 +560,7 @@ run_prog:
 	jz  boot_it
 
 not_elks:
+
 	push %cs
 	pop %ds
 	mov $ERR_BAD_SYSTEM,%al
@@ -610,7 +609,7 @@ end_of_code:
 	.org SECTOR_SIZE/2-2
 	.word 0xAA55 // boot signature need to be at 0x1FE and 0x1FF
 
-//はみ出したところに置く 置けるはず!
+//extra code over 512Byte for 1024Byte/Sector
 	.global except
 except:
 _except:
@@ -779,6 +778,8 @@ head_max:
 // that is specific to the filesystem
 
 	.org SECTOR_SIZE
+
 payload:
 #endif
+
 //------------------------------------------------------------------------------
