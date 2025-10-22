@@ -428,7 +428,7 @@ void BFPROC bios_switch_device98(int target, unsigned int device,
         if((BD_CX & 0x300)==0x300)
          *drivep = fd_types[FD1232];
         else
-	  *drivep = fd_types[FD1200];
+         *drivep = fd_types[FD1200];
      }
 }
 #endif
