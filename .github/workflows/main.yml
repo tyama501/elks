@@ -5,7 +5,7 @@ on:
     paths:
       - '**'
       - '!.github/workflows/cross.yml'
-      - '!.github/workflows/ow-libc.yml'
+#     - '!.github/workflows/ow-libc.yml'
       - '!tools/*'
 #  pull_request:
 #    paths:
@@ -17,18 +17,18 @@ on:
 jobs:
   build:
 
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
 
     steps:
       - name: setup
-        run: 'sudo apt-get install texinfo libncurses5-dev libelf-dev ncompress'
+        run: 'sudo apt-get install texinfo libncurses5-dev libelf-dev ncompress nasm'
 
       - name: checkout
         uses: actions/checkout@v2
 
       - name: cache
         id: cache
-        uses: actions/cache@v1
+        uses: actions/cache@v4
         with:
           path: cross
           key: cross-${{ hashFiles('tools/*') }}-${{ runner.os }}
@@ -41,8 +41,19 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: tools/build.sh
 
+      - name: Open Watcom setup
+        uses: open-watcom/setup-watcom@v0
+        with:
+          version: "2.0-64"
+
+      - name: environ
+        run: |
+            echo $WATCOM
+            echo $INCLUDE
+            echo $PATH
+
       - name: build
-        run: ./build.sh auto allimages
+        run: ./build.sh auto ext allimages
 
       - name: upload
         uses: actions/upload-artifact@v4
@@ -141,6 +152,12 @@ jobs:
           path: image/hd64-minix.img
 
       - name: upload17
+        uses: actions/upload-artifact@v4
+        with:
+          name: hd64mbr-minix.img
+          path: image/hd64mbr-minix.img
+
+      - name: upload18
         uses: actions/upload-artifact@v4
         with:
           name: fd1232.img

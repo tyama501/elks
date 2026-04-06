@@ -33,6 +33,7 @@ int nr_ext_bufs = CONFIG_FS_NR_EXT_BUFFERS;     /* override with /bootopts buf= 
 #ifdef CONFIG_FS_XMS_BUFFER
 int nr_xms_bufs = CONFIG_FS_NR_XMS_BUFFERS;     /* override with /bootopts xmsbuf= */
 #endif
+static int xmsenabled;                          /* local copy of xms_enabled */
 
 /* Buffer heads: local heap allocated */
 static struct buffer_head *buffer_heads;
@@ -80,7 +81,6 @@ static struct buffer_head *L1map[MAX_NR_MAPBUFS]; /* L1 indexed pointer to L2 bu
 static struct wait_queue L1wait;                  /* Wait for a free L1 buffer area */
 static int lastL1map;
 #endif
-static int xms_enabled;
 static int map_count, remap_count, unmap_count;
 
 static int nr_free_bh, nr_bh;
@@ -98,7 +98,7 @@ static int nr_free_bh, nr_bh;
 
 #define buf_num(bh)     ((bh) - buffer_heads)   /* buffer number, for debugging */
 
-static void put_last_lru(struct buffer_head *bh)
+static void FARPROC put_last_lru(struct buffer_head *bh)
 {
     ext_buffer_head *ebh = EBH(bh);
 
@@ -135,7 +135,7 @@ static void INITPROC add_buffers(int nbufs, char *buf, ramdesc_t seg)
 
 #if defined(CONFIG_FS_EXTERNAL_BUFFER) || defined(CONFIG_FS_XMS_BUFFER)
         /* segment adjusted to require no offset to buffer */
-        offset = xms_enabled? ((n & 63) << BLOCK_SIZE_BITS) :
+        offset = xmsenabled?  ((n & 63) << BLOCK_SIZE_BITS) :
                               ((n & 63) << (BLOCK_SIZE_BITS - 4));
         ebh->b_L2seg = seg + offset;
 #else
@@ -148,7 +148,6 @@ static void INITPROC add_buffers(int nbufs, char *buf, ramdesc_t seg)
 #if defined(CHECK_FREECNTS) && DEBUG_EVENT
 static void list_buffer_status(void)
 {
-    int i = 1;
     int inuse = 0;
     int isinuse, j;
     struct buffer_head *bh = bh_llru;
@@ -167,14 +166,13 @@ static void list_buffer_status(void)
                     }
                 }
             }
-            printk("\n#%3d: buf %3d blk/dev %5ld/%p %c%c%c %smapped L%02d %d count %d",
-                i, buf_num(bh), ebh->b_blocknr, ebh->b_dev,
+            printk("\n#%3d: blk/dev %5ld/%p %c%c%c %smapped L%02d %d count %d",
+                buf_num(bh), ebh->b_blocknr, ebh->b_dev,
                 ebh->b_locked?  'L': ' ',
                 ebh->b_dirty?   'D': ' ',
                 ebh->b_uptodate?'U': ' ',
                 j? "  ": "un", j, ebh->b_mapcount, ebh->b_count);
         }
-        i++;
         if (isinuse) inuse++;
     } while ((bh = ebh->b_prev_lru) != NULL);
     printk("\nTotal L2 buffers inuse %d/%d (%d free)", inuse, nr_bh, nr_free_bh);
@@ -193,9 +191,14 @@ int INITPROC buffer_init(void)
 
 #ifdef CONFIG_FS_XMS_BUFFER
     if (nr_xms_bufs)
-        xms_enabled = xms_init();       /* try to enable unreal mode and A20 gate*/
-    if (xms_enabled)
+        xmsenabled = xms_init();        /* try to enable unreal mode and A20 gate*/
+    if (xmsenabled) {
         bufs_to_alloc = nr_xms_bufs;
+#ifdef CONFIG_BLK_DEV_FD
+        /* must allocate direct floppy track cache before buffers to avoid any 64k wrap */
+        df_cache_seg = xms_alloc(TRACKSEGSZ >> 10); /* in K, must match CACHE_SIZE */
+#endif
+    }
 #endif
 #ifdef CONFIG_FAR_BUFHEADS
     if (bufs_to_alloc > 2975) bufs_to_alloc = 2975; /* max 64K far bufheads @22 bytes*/
@@ -203,8 +206,8 @@ int INITPROC buffer_init(void)
     if (bufs_to_alloc > 256) bufs_to_alloc = 256; /* protect against high XMS value*/
 #endif
 
-    printk("%d %s buffers (%dK ram), %dK cache, %d req hdrs\n", bufs_to_alloc,
-        xms_enabled? "xms": "ext", bufs_to_alloc, nr_map_bufs, NR_REQUEST);
+    printk("%dK %s buffers, %dK cache, %d req hdrs\n", bufs_to_alloc,
+        xmsenabled? "xms": "ext", nr_map_bufs, NR_REQUEST);
 #else
     int bufs_to_alloc = nr_map_bufs;
 #endif
@@ -238,8 +241,9 @@ int INITPROC buffer_init(void)
             nbufs = 64;
         bufs_to_alloc -= nbufs;
 #ifdef CONFIG_FS_XMS_BUFFER
-        if (xms_enabled) {
-            ramdesc_t xmsseg = xms_alloc((long_t)nbufs << BLOCK_SIZE_BITS);
+        if (xmsenabled) {
+            ramdesc_t xmsseg = xms_alloc(nbufs);    /* in Kbytes */
+            if (!xmsseg) panic("Not enough XMS for buffers");
             add_buffers(nbufs, 0, xmsseg);
         } else
 #endif
@@ -319,7 +323,7 @@ void invalidate_buffers(kdev_t dev)
     } while ((bh = ebh->b_prev_lru) != NULL);
 }
 
-static void sync_buffers(kdev_t dev, int wait)
+static void FARPROC sync_buffers(kdev_t dev, int wait)
 {
     struct buffer_head *bh = bh_lru;
     ext_buffer_head *ebh;
@@ -362,7 +366,7 @@ static void sync_buffers(kdev_t dev, int wait)
     debug_blk("SYNC_BUFFERS END %d wrote %d\n", wait, count);
 }
 
-static struct buffer_head *get_free_buffer(void)
+static struct buffer_head * FARPROC get_free_buffer(void)
 {
     struct buffer_head *bh = bh_lru;
     ext_buffer_head *ebh = EBH(bh);
@@ -430,7 +434,7 @@ void bforget(struct buffer_head *bh)
 }
 #endif
 
-static struct buffer_head *find_buffer(kdev_t dev, block32_t block)
+static struct buffer_head * FARPROC find_buffer(kdev_t dev, block32_t block)
 {
     struct buffer_head *bh = bh_llru;
     ext_buffer_head *ebh;
@@ -632,13 +636,13 @@ int sys_sync(void)
 /* clear a buffer area to zeros, used to avoid slow map to L1 if possible */
 void zero_buffer(struct buffer_head *bh, size_t offset, int count)
 {
-#if defined(CONFIG_FS_XMS_INT15) || (!defined(CONFIG_FS_EXTERNAL_BUFFER) && !defined(CONFIG_FS_XMS_BUFFER))
+#if !defined(CONFIG_FS_EXTERNAL_BUFFER) && !defined(CONFIG_FS_XMS_BUFFER)
 #define FORCEMAP 1
 #else
 #define FORCEMAP 0
 #endif
     /* xms int15 doesn't support a memset function, so map into L1 */
-    if (FORCEMAP || bh->b_data) {
+    if (FORCEMAP || bh->b_data || xmsenabled == XMS_INT15 ) {
         map_buffer(bh);
         memset(bh->b_data + offset, 0, count);
         unmap_buffer(bh);
@@ -646,7 +650,7 @@ void zero_buffer(struct buffer_head *bh, size_t offset, int count)
 #if !FORCEMAP
     else {
         ext_buffer_head *ebh = EBH(bh);
-        xms_fmemset((char *)offset, ebh->b_L2seg, 0, count);
+        xms_fmemset((char *)offset, ebh->b_L2seg, count);
     }
 #endif
 }
@@ -788,10 +792,5 @@ void brelseL1(struct buffer_head *bh, int copyout)
 ramdesc_t buffer_seg(struct buffer_head *bh)
 {
     return (bh->b_data? kernel_ds: EBH(bh)->b_L2seg);
-}
-
-char *buffer_data(struct buffer_head *bh)
-{
-    return (bh->b_data? bh->b_data: 0); /* L2 addresses are at offset 0 */
 }
 #endif /* CONFIG_FS_EXTERNAL_BUFFER | CONFIG_FS_XMS_BUFFER*/

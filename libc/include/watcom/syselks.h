@@ -78,7 +78,7 @@ typedef int syscall_res;
 #define SYS_unlink               10
 #define SYS_execve               11
 #define SYS_chdir                12
-#define SYS_time                 13
+//#define SYS_time               13
 #define SYS_mknod                14
 #define SYS_chmod                15
 #define SYS_chown                16
@@ -91,7 +91,7 @@ typedef int syscall_res;
 #define SYS_setuid               23
 #define SYS_getuid               24
 //#define SYS_stime              25
-#define SYS_ptrace               26
+//#define SYS_ptrace             26
 #define SYS_alarm                27
 #define SYS_fstat                28
 //#define SYS_pause              29
@@ -138,17 +138,17 @@ typedef int syscall_res;
 #define SYS_ustatfs              70
 #define SYS_setitimer            71
 #define SYS_sysctl               72
-#define SYS_uname                73
 
-#define SYS_socket              198
-
-#define SYS_bind                200
-#define SYS_listen              201
-#define SYS_accept              202
-#define SYS_connect             203
-#define SYS_setsockopt          204
-#define SYS_getsocknam          205
-#define SYS_fmemalloc           206
+#define SYS_uname                74
+#define SYS_socket               75
+#define SYS_bind                 76
+#define SYS_listen               77
+#define SYS_accept               78
+#define SYS_connect              79
+#define SYS_setsockopt           80
+#define SYS_getsocknam           81
+#define SYS_fmemalloc            82
+#define SYS_fmemfree             83
 
 
 #define _sys_exit(rc)       sys_call1n(SYS_exit, rc)
@@ -201,7 +201,7 @@ syscall_res sys_call5( unsigned func, unsigned r_bx, unsigned r_cx, unsigned r_d
 
 /* Set the DS register from passed far address before system call */
 #if defined(__COMPACT__) || defined(__LARGE__)
-#define sys_setseg(ptr)     sys_setds(((unsigned long)ptr) >> 16)
+#define sys_setseg(ptr)         if (ptr) sys_setds(((unsigned long)ptr) >> 16)
 #else
 #define sys_setseg(ptr)         /* DS already set in small and medium models */
 #endif

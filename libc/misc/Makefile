@@ -6,6 +6,7 @@ LIB ?= out.a
 include $(TOPDIR)/libc/$(COMPILER).inc
 
 OBJS = \
+	abs.o \
 	aliases.o \
 	atexit.o \
 	atof.o \
@@ -22,10 +23,13 @@ OBJS = \
 	getenv.o \
 	getpass.o \
 	getopt.o \
+	hexdump.o \
 	itoa.o \
 	ltoa.o \
 	ltostr.o \
 	lltostr.o \
+	linenoise.o \
+	linenoise_compl.o \
 	mktemp.o \
 	popen.o \
 	ptostr.o \

@@ -7,7 +7,12 @@
 #include __SYSINC__(signal.h)
 
 sighandler_t signal(int number, sighandler_t pointer);
+
+#ifdef __C86__
+int _signal(int __sig, sighandler_t __cbfunc, unsigned int cs);   /* syscall */
+#elif !defined(__STRICT_ANSI__)
 int _signal(int __sig, __kern_sighandler_t __cbfunc);   /* syscall */
+#endif
 
 typedef struct siginfo_t siginfo_t;
 
@@ -31,5 +36,6 @@ int sigemptyset(sigset_t *set);
 
 int kill (pid_t pid, int sig);
 int killpg (int pid, int sig);
+int raise (int sig);
 
 #endif

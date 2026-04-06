@@ -51,10 +51,9 @@ all: mtools-4.0.23/Makefile
 
 mtools-4.0.23/Makefile:
 	cd mtools-4.0.23; ./configure --disable-floppyd; cd ..
-
-dokclean:
-
-doclean:
+	case `uname -s` in Darwin) \
+	    sed -i.bak 's/^#define HAVE_STAT64 1//' mtools-4.0.23/config.h && \
+	    rm -f mtools-4.0.23/config.h.bak ;; esac
 
 clean:
 	make -C mtools-4.0.23 clean

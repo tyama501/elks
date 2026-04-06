@@ -4,6 +4,7 @@
 #include <linuxmt/kernel.h>
 #include <linuxmt/heap.h>
 #include <linuxmt/string.h>
+#include <linuxmt/debug.h>
 
 // Minimal block size to hold heap header
 // plus enough space in body to be useful
@@ -89,8 +90,8 @@ void * heap_alloc (word_t size, byte_t tag)
 		h++;						// skip header
 		if (tag & HEAP_TAG_CLEAR)
 			memset(h, 0, size);
-	}
-	if (!h) printk("HEAP: no memory (%u bytes)\n", size);
+	} else
+		printk("HEAP: no memory (%u bytes)\n", size);
 	return h;
 }
 
@@ -118,10 +119,9 @@ void heap_free (void * data)
 			heap_merge (prev, h);
 			i = _heap_free.prev;
 			h = prev;
-		} else {
-			h->tag = HEAP_TAG_FREE;
 		}
 	}
+	h->tag = HEAP_TAG_FREE;
 
 	// Try to merge with next block if free
 
@@ -160,25 +160,26 @@ void heap_add (void * data, word_t size)
 
 // Initialize heap
 
-void heap_init ()
+void heap_init (void)
 {
+	//debug_setcallback(2, heap_display);
 	list_init (&_heap_all);
 	list_init (&_heap_free);
 }
 
-#if UNUSED
-static void heap_cb (heap_s * h)
+#if DEBUG
+static void heap_line (heap_s *h)
 {
-        printk ("heap:%Xh:%u:%hxh\n",h, h->size, h->tag);
+    printk("heap %04x size %5u tag %02x\n", h, h->size, h->tag);
 }
 
-void heap_iterate (void (* cb) (heap_s *))
+void heap_display (void)
 {
 	list_s * n = _heap_all.next;
 
 	while (n != &_heap_all) {
 		heap_s * h = structof (n, heap_s, all);
-		(*cb) (h);
+		heap_line (h);
 		n = h->all.next;
 	}
 }

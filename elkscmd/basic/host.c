@@ -134,6 +134,7 @@ char *host_readLine() {
     static char buf[TOKEN_BUF_SIZE+1];
 
     tty_isig();
+    clearerr(stdin);
     while (!fgets(buf, sizeof(buf), stdin)) {
         if (ferror(stdin) && (errno == EINTR)) {
              clearerr(stdin);
@@ -161,61 +162,6 @@ int host_getKey() {
 int host_breakPressed() {
     return intflag;
 }
-
-#ifdef _M_I86
-/* replacement fread to fix fgets not returning ferror/errno properly on SIGINT*/
-size_t fread(void *buf, size_t size, size_t nelm, FILE *fp)
-{
-   int len, v;
-   size_t bytes, got = 0;
-
-   v = fp->mode;
-
-   /* Want to do this to bring the file pointer up to date */
-   if (v & __MODE_WRITING)
-      fflush(fp);
-
-   /* Can't read or there's been an EOF or error then return zero */
-   if ((v & (__MODE_READ | __MODE_EOF | __MODE_ERR)) != __MODE_READ)
-      return 0;
-
-   /* This could be long, doesn't seem much point tho */
-   bytes = size * nelm;
-
-   len = fp->bufread - fp->bufpos;
-   if (len >= bytes)            /* Enough buffered */
-   {
-      memcpy(buf, fp->bufpos, bytes);
-      fp->bufpos += bytes;
-      return nelm;
-   }
-   else if (len > 0)            /* Some buffered */
-   {
-      memcpy(buf, fp->bufpos, len);
-      fp->bufpos += len;
-      got = len;
-   }
-
-   /* Need more; do it with a direct read */
-   len = read(fp->fd, (char *)buf + got, bytes - got);
-   /* Possibly for now _or_ later */
-#if 1   /* Fixes stdio when SIGINT received*/
-   if (intflag) {
-      len = -1;
-      errno = EINTR;
-   }
-#endif
-   if (len < 0)
-   {
-      fp->mode |= __MODE_ERR;
-      len = 0;
-   }
-   else if (len == 0)
-      fp->mode |= __MODE_EOF;
-
-   return (got + len) / size;
-}
-#endif
 
 void host_outputFreeMem(unsigned int val)
 {
@@ -342,6 +288,8 @@ static int loop(FILE *infile) {
         if (lineNumber != 0) {
             host_outputLong(lineNumber);
             host_outputChar('-');
+        } else {
+            printf("Tokenization error near '%s'\n", input);
         }
         printf("%s\n\n", errorTable[ret]);
     } else if (!infile)

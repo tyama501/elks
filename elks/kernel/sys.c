@@ -99,7 +99,7 @@ pid_t sys_getpid(int *ppid)
     return twovalues(current->pid, (int *)&current->ppid, ppid);
 }
 
-unsigned short int sys_umask(mode_t mask)
+mode_t sys_umask(mode_t mask)
 {
     mode_t old;
 
@@ -311,7 +311,7 @@ int in_group_p(gid_t grp)
     gid_t *pg;
     char *p;
 
-    if (grp != (current->egid) {
+    if (grp != (current->egid)) {
         pg = current->groups - 1;
         p = (char *)(pg + NGROUPS);
 

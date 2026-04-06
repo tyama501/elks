@@ -16,6 +16,7 @@
 #include <linuxmt/fs.h>
 #include <linuxmt/mm.h>
 #include <linuxmt/utime.h>
+#include <linuxmt/init.h>
 #include <linuxmt/debug.h>
 
 #include <arch/segment.h>
@@ -43,7 +44,7 @@ int sys_utime(char *filename, register struct utimbuf *times)
  * We do this by temporarily setting fsuid/fsgid to the wanted values
  */
 
-int sys_access(char *filename, mode_t mode)
+int sys_access(const char *filename, mode_t mode)
 {
     struct inode *inode;
     uid_t old_euid;
@@ -174,7 +175,7 @@ static int do_chown(register struct inode *inode, uid_t user, gid_t group)
 }
 #endif
 
-static int do_chown(register struct inode *inode, uid_t user, gid_t group)
+static int FARPROC do_chown(register struct inode *inode, uid_t user, gid_t group)
 {
     if (IS_RDONLY(inode)) return -EROFS;
 
@@ -240,7 +241,7 @@ int sys_open(const char *filename, int flags, mode_t mode)
     if ((flags + 1) & O_ACCMODE) flag++;
     if (flag & (O_TRUNC | O_CREAT)) flag |= FMODE_WRITE;
 
-    debug_cache("\nOPEN '%t' flags %02x ", filename, flags);
+    debug_file("\nOPEN '%t' flags %02x ", filename, flags);
     error = open_namei(filename, flag, mode, &inode, NULL);
     if (!error) {
         if ((error = open_fd(flags, inode)) < 0)

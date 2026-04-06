@@ -17,7 +17,7 @@ CLEANME 	= $(BASEDIR)/include/arch/asm-offsets.h
 
 DEPEND  	= 
 
-DISTFILES	= defconfig
+DISTFILES	= 
 
 NOINDENT	= 
 
@@ -103,8 +103,12 @@ ifeq ($(CONFIG_ROM_BOOTABLE_BY_RESET), y)
     RVECT = -r $(CONFIG_ROM_RESET_ADDRESS)   
 endif
 
+ifdef CONFIG_ARCH_SWAN
+    SWANARG = -w
+endif
+
 Image:	toolkit boot/setup boot/system  
-	tools/mkbootloader $(RVECT) -c $(CONFIG_ROM_SETUP_CODE) $(CONFIG_ROM_CHECKSUM_SIZE) boot/Image $(CONFIG_ROM_BASE) -a boot/setup $(CONFIG_ROM_SETUP_CODE) -s boot/system $(CONFIG_ROM_KERNEL_CODE) $(CONFIG_ROM_BIOS_MODULE) $(CONFIG_ROM_BIOS_MODULE_ADDR)
+	tools/mkbootloader $(SWANARG) $(RVECT) -c $(CONFIG_ROM_SETUP_CODE) $(CONFIG_ROM_CHECKSUM_SIZE) boot/Image $(CONFIG_ROM_BASE) -a boot/setup $(CONFIG_ROM_SETUP_CODE) -s boot/system $(CONFIG_ROM_KERNEL_CODE) $(CONFIG_ROM_BIOS_MODULE) $(CONFIG_ROM_BIOS_MODULE_ADDR)
 	$(CONFIG_ROM_SIMULATOR_PROGRAM)
 
 # End PC image build
@@ -126,13 +130,13 @@ setup:	toolkit boot/setup
 .PHONY: kernel/akernel.a lib/lib86.a mm/mm.a drivers/char/chr_drv.a \
 	drivers/block/blk_drv.a drivers/net/net_drv.a
 
-kernel/akernel.a:
+kernel/akernel.a: $(XINCLUDE)
 	${MAKE} -C kernel akernel.a
 
 lib/lib86.a:
 	${MAKE} -C lib lib86.a
 
-mm/mm.a:
+mm/mm.a: $(XINCLUDE)
 	${MAKE} -C mm mm.a
 
 drivers/char/chr_drv.a:
@@ -141,28 +145,11 @@ drivers/char/chr_drv.a:
 drivers/block/blk_drv.a:
 	${MAKE} -C drivers/block blk_drv.a
 
-drivers/net/net_drv.a:
+drivers/net/net_drv.a: $(XINCLUDE)
 	${MAKE} -C drivers/net net_drv.a
 
 #########################################################################
-# commands.
-
-distdir:
-	mkdir -p $(DISTDIR)/arch/i86
-	(cd $(DISTDIR)/arch/i86 ; \
-		mkdir -p boot drivers kernel lib mm tools)
-	(cd $(DISTDIR)/arch/i86/drivers ; \
-		mkdir -p block char)
-	cp -pf defconfig Makefile $(DISTDIR)/arch/i86
-	cp -pf boot/*.S boot/*.c $(DISTDIR)/arch/i86/boot
-	cp -pf tools/Makefile tools/*.h $(DISTDIR)/arch/i86/tools
-	cp -pf tools/mknbi-elks tools/*.c $(DISTDIR)/arch/i86/tools
-	cp -pf tools/*.s tools/*.1 $(DISTDIR)/arch/i86/tools
-	${MAKE} -C drivers/block distdir
-	${MAKE} -C drivers/char distdir
-	${MAKE} -C kernel distdir
-	${MAKE} -C lib distdir
-	${MAKE} -C mm distdir
+# Standard commands.
 
 #########################################################################
 ### Dependencies:

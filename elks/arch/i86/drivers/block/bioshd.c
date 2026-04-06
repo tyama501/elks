@@ -43,10 +43,10 @@
 #include <linuxmt/string.h>
 #include <linuxmt/mm.h>
 #include <linuxmt/memory.h>
-#include <linuxmt/debug.h>
 #include <linuxmt/timer.h>
+#include <linuxmt/devnum.h>
+#include <linuxmt/debug.h>
 
-#include <arch/hdreg.h>
 #include <arch/io.h>
 #include <arch/segment.h>
 #include <arch/system.h>
@@ -74,34 +74,31 @@ struct elks_disk_parms {
     __u8 marker[2];             /* should be "eL" */
 } __attribute__((packed));
 
-static int bioshd_initialized = 0;
-static int fd_count = 0;                /* number of floppy disks */
-static int hd_count = 0;                /* number of hard disks */
+static char bioshd_initialized;
+static char mbr_modified;
+static int fd_count;                    /* number of floppy disks */
+static int hd_count;                    /* number of hard disks */
 
 static int access_count[NUM_DRIVES];    /* device open count */
-struct drive_infot drive_info[NUM_DRIVES];   /* operating drive info */
+static struct drive_infot drive_info[NUM_DRIVES];        /* operating drive info */
+static struct hd_struct part[NUM_DRIVES << MINOR_SHIFT]; /* partitions start, size*/
 static struct drive_infot *cache_drive;
-struct drive_infot *last_drive;         /* set to last drivep-> used in read/write */
+       struct drive_infot *last_drive;  /* set to last drivep-> used in read/write */
 extern struct drive_infot fd_types[];   /* BIOS floppy formats */
-
-static struct hd_struct hd[NUM_DRIVES << MINOR_SHIFT];  /* partitions start, size*/
 
 static int bioshd_open(struct inode *, struct file *);
 static void bioshd_release(struct inode *, struct file *);
 static int bioshd_ioctl(struct inode *, struct file *, unsigned int, unsigned int);
-static void bioshd_geninit(void);
 
-static struct gendisk bioshd_gendisk = {
+struct gendisk bioshd_gendisk = {
     MAJOR_NR,                   /* Major number */
     "hd",                       /* Major name */
     MINOR_SHIFT,                /* Bits to shift to get real from partition */
-    1 << MINOR_SHIFT,           /* Number of partitions per real */
+    1 << MINOR_SHIFT,           /* maximum number of partitions per drive */
     NUM_DRIVES,                 /* maximum number of drives */
-    bioshd_geninit,             /* init function */
-    hd,                         /* hd struct */
+    part,                       /* partition table */
     0,                          /* hd drives found */
-    drive_info,
-    NULL                        /* next */
+    drive_info                  /* fd/hd drive CHS and type */
 };
 
 static void BFPROC set_cache_invalid(void)
@@ -115,6 +112,7 @@ static int BFPROC read_sector(int drive, int cylinder, int sector)
 {
     int count = 2;              /* one retry on probe or boot sector read */
 
+    struct drive_infot *drivep = &drive_info[DRIVE_FD0+drive];
 #ifdef CONFIG_ARCH_PC98
     drive = bios_drive_map[DRIVE_FD0+drive];
 #endif
@@ -123,7 +121,7 @@ static int BFPROC read_sector(int drive, int cylinder, int sector)
     do {
         set_irq();
         bios_set_ddpt(36);      /* set to large value to avoid BIOS issues*/
-        if (!bios_disk_rw(BIOSHD_READ, 1, drive, cylinder, 0, sector, DMASEG, 0))
+        if (!bios_disk_rw(BIOSHD_READ, 1, drive, cylinder, 0, sector, DMASEG, 0, drivep))
             return 0;           /* everything is OK */
         bios_disk_reset(drive);
     } while (--count > 0);
@@ -145,7 +143,7 @@ static void BFPROC probe_floppy(int target, struct hd_struct *hdp)
          * somewhere near)
          */
 #ifdef CONFIG_ARCH_PC98
-        static unsigned char sector_probe[3] = { 8, 9, 18 };
+        static unsigned char sector_probe[4] = { 8, 9, 15, 18 };
         static unsigned char track_probe[2] = { 77, 80 };
 #else
         static unsigned char sector_probe[5] = { 8, 9, 15, 18, 36 };
@@ -236,7 +234,7 @@ static void BFPROC probe_floppy(int target, struct hd_struct *hdp)
             if (count && read_sector(target, track_probe[count] - 1, 1)) {
                 bios_switch_device98(target, 0x10, drivep);  /* 720 KB */
                 if (read_sector(target, track_probe[count] - 1, 1))
-                    bios_switch_device98(target, 0x90, drivep);  /* 1.232 MB */
+                    bios_switch_device98(target, 0x90, drivep);  /* 1.200 MB or 1.232 MB */
                 else
                     pc98_720KB = 1;
             }
@@ -265,10 +263,10 @@ static void BFPROC probe_floppy(int target, struct hd_struct *hdp)
         count = 0;
 #ifdef CONFIG_ARCH_PC98
         do {
-            if (count == 2)
+            if (count == 3)
                 bios_switch_device98(target, 0x30, drivep);  /* 1.44 MB */
             /* skip reading first entry */
-            if ((count == 2) && read_sector(target, 0, sector_probe[count])) {
+            if ((count == 3) && read_sector(target, 0, sector_probe[count])) {
                 if (pc98_720KB) {
                     bios_switch_device98(target, 0x10, drivep);  /* 720 KB */
                     /* Read BPB to find 8 sectors, 640KB format. Currently, it is not supported */
@@ -277,7 +275,7 @@ static void BFPROC probe_floppy(int target, struct hd_struct *hdp)
                         bios_switch_device98(target, 0x90, drivep);
                 }
                 else
-                    bios_switch_device98(target, 0x90, drivep);  /* 1.232 MB */
+                    bios_switch_device98(target, 0x90, drivep);  /* 1.200 MB or 1.232 MB */
             }
         } while (++count < sizeof(sector_probe)/sizeof(sector_probe[0]));
 #else
@@ -316,10 +314,11 @@ static void BFPROC probe_floppy(int target, struct hd_struct *hdp)
 
 static int bioshd_open(struct inode *inode, struct file *filp)
 {
-    int target = DEVICE_NR(inode->i_rdev);      /* >> MINOR_SHIFT */
-    struct hd_struct *hdp = &hd[MINOR(inode->i_rdev)];
+    int minor = MINOR(inode->i_rdev);
+    struct hd_struct *hdp = &part[minor];
+    int target = minor >> MINOR_SHIFT;
 
-    if (!bioshd_initialized || target >= NUM_DRIVES || hdp->start_sect == -1U)
+    if (!bioshd_initialized || target >= NUM_DRIVES || hdp->start_sect == NOPART)
         return -ENXIO;
 
     if (++access_count[target] == 1) {
@@ -327,6 +326,11 @@ static int bioshd_open(struct inode *inode, struct file *filp)
         probe_floppy(target, hdp);      /* probe only on initial open */
 #endif
     }
+    if (mbr_modified && target < DRIVE_FD0) {
+        init_partitions(&bioshd_gendisk);
+        mbr_modified = 0;
+    }
+
     inode->i_size = hdp->nr_sects * drive_info[target].sector_size;
     /* limit inode size to max filesize for CHS >= 4MB (2^22)*/
     if (hdp->nr_sects >= 0x00400000L)   /* 2^22*/
@@ -357,50 +361,31 @@ static struct file_operations bioshd_fops = {
     bioshd_release              /* release */
 };
 
-void INITPROC bioshd_init(void)
+struct gendisk * INITPROC bioshd_init(void)
 {
-    register struct gendisk *ptr;
-    int count;
+#if defined(CONFIG_BLK_DEV_BFD) || defined(CONFIG_BLK_DEV_BFD_HARD)
+    if (dev_disabled(DEV_FD0))
+        printk("fd0: disabled\n");
+    else
+        fd_count = bios_getfdinfo(&drive_info[DRIVE_FD0]);
+#endif
+#ifdef CONFIG_BLK_DEV_BHD
+    if (dev_disabled(DEV_HDA))
+        printk("hda: disabled\n");
+    else
+        hd_count = bioshd_gendisk.nr_hd = bios_gethdinfo(&drive_info[DRIVE_HD0]);
+#endif
+
+    if (!(fd_count + hd_count))
+        return NULL;
 
     /* FIXME perhaps remove for speed on floppy boot*/
     outb_p(0x0C, FDC_DOR);      /* FD motors off, enable IRQ and DMA*/
 
-#if defined(CONFIG_BLK_DEV_BFD) || defined(CONFIG_BLK_DEV_BFD_HARD)
-    fd_count = bios_getfdinfo(&drive_info[DRIVE_FD0]);
-#endif
-#ifdef CONFIG_BLK_DEV_BHD
-    hd_count = bios_gethdinfo(&drive_info[DRIVE_HD0]);
-    bioshd_gendisk.nr_hd = hd_count;
-#endif
-
 #ifdef PER_DRIVE_INFO
     {
-        register struct drive_infot *drivep;
-        static char UNITS[4] = "KMGT";
-
-        drivep = drive_info;
-        for (count = 0; count < NUM_DRIVES; count++, drivep++) {
-            if (drivep->heads != 0) {
-                char *unit = UNITS;
-                __u32 size = ((__u32) drivep->sectors) * 5;     /* 0.1 kB units */
-                if (drivep->sector_size == 1024)
-                    size <<= 1;
-                size *= ((__u32) drivep->cylinders) * drivep->heads;
-
-                /* Select appropriate unit */
-                while (size > 99999 && unit[1]) {
-                    debug("DBG: Size = %lu (%X/%X)\n", size, *unit, unit[1]);
-                    size += 512U;
-                    size /= 1024U;
-                    unit++;
-                }
-                debug("DBG: Size = %lu (%X/%X)\n",size,*unit,unit[1]);
-                printk("%cd%c: %4lu%c CHS %3u,%2d,%d\n",
-                    (count < 4 ? 'h' : 'f'), (count & 3) + (count < 4 ? 'a' : '0'),
-                    (size/10), *unit,
-                    drivep->cylinders, drivep->heads, drivep->sectors);
-            }
-        }
+        show_drive_info(&drive_info[DRIVE_HD0], "hd", 0, hd_count, "\n");
+        show_drive_info(&drive_info[DRIVE_FD0], "fd", 0, fd_count, "\n");
     }
 #else /* one line version */
 #ifdef CONFIG_BLK_DEV_BFD
@@ -420,85 +405,37 @@ void INITPROC bioshd_init(void)
 #endif
 #endif /* PER_DRIVE_INFO */
 
-    if (!(fd_count + hd_count)) return;
+    if (register_blkdev(MAJOR_NR, DEVICE_NAME, &bioshd_fops))
+        return NULL;
+    blk_dev[MAJOR_NR].request_fn = DEVICE_REQUEST;
 
     bios_copy_ddpt();       /* make a RAM copy of the disk drive parameter table*/
-
-    if (!register_blkdev(MAJOR_NR, DEVICE_NAME, &bioshd_fops)) {
-        blk_dev[MAJOR_NR].request_fn = DEVICE_REQUEST;
-
-        if (gendisk_head == NULL) {
-            bioshd_gendisk.next = gendisk_head;
-            gendisk_head = &bioshd_gendisk;
-        } else {
-            for (ptr = gendisk_head; ptr->next != NULL; ptr = ptr->next)
-                continue;
-            ptr->next = &bioshd_gendisk;
-            //bioshd_gendisk.next = NULL;
-        }
-        bioshd_initialized = 1;
-    } else {
-        printk("bioshd: init error\n");
-    }
-}
-
-static void INITPROC bioshd_geninit2(void)
-{
-    struct drive_infot *drivep = drive_info;
-    struct hd_struct *hdp = hd;
-    int i;
-
-    for (i = 0; i < NUM_DRIVES << MINOR_SHIFT; i++) {
-        if ((i & ((1 << MINOR_SHIFT) - 1)) == 0) {
-            hdp->nr_sects = (sector_t)drivep->sectors * drivep->heads * drivep->cylinders;
-            hdp->start_sect = 0;
-            drivep++;
-        } else {
-            hdp->nr_sects = 0;
-            hdp->start_sect = -1;
-        }
-        hdp++;
-    }
-
-}
-
-/* called by setup_dev() */
-static void bioshd_geninit(void)
-{
-    bioshd_geninit2();
+    bioshd_initialized = 1;
+    return &bioshd_gendisk;
 }
 
 static int bioshd_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
     unsigned int arg)
 {
-    register struct hd_geometry *loc = (struct hd_geometry *) arg;
-    register struct drive_infot *drivep;
-    int dev, err;
+    int dev;
 
     /* get sector size called with NULL inode and arg = superblock s_dev */
     if (cmd == IOCTL_BLK_GET_SECTOR_SIZE)
         return drive_info[DEVICE_NR(arg)].sector_size;
 
-    if (!inode || !inode->i_rdev)
+    if (!inode)
         return -EINVAL;
 
     dev = DEVICE_NR(inode->i_rdev);
     if (dev >= ((dev < DRIVE_FD0) ? hd_count : (DRIVE_FD0 + fd_count)))
         return -ENODEV;
 
-    drivep = &drive_info[dev];
-    err = -EINVAL;
     switch (cmd) {
-    case HDIO_GETGEO:
-        err = verify_area(VERIFY_WRITE, (void *)loc, sizeof(struct hd_geometry));
-        if (!err) {
-            put_user_char(drivep->heads, &loc->heads);
-            put_user_char(drivep->sectors, &loc->sectors);
-            put_user(drivep->cylinders, &loc->cylinders);
-            put_user_long(hd[MINOR(inode->i_rdev)].start_sect, &loc->start);
-        }
+    case HDIO_GETGEO:   /* need this one for the fdisk/sys/makeboot commands */
+        return ioctl_hdio_geometry(&bioshd_gendisk, inode->i_rdev,
+            (struct hd_geometry *)arg);
     }
-    return err;
+    return -EINVAL;
 }
 
 /* calculate CHS and sectors remaining for track read */
@@ -589,7 +526,7 @@ static int BFPROC do_readwrite(struct drive_infot *drivep, sector_t start, char 
 
         bios_set_ddpt(drivep->sectors);
         error = bios_disk_rw(cmd == WRITE? BIOSHD_WRITE: BIOSHD_READ, this_pass,
-                                drive, cylinder, head, sector, segment, offset);
+                                drive, cylinder, head, sector, segment, offset, drivep);
         if (error) {
             printk("bioshd(%x): cmd %d retry #%d CHS %d/%d/%d count %d\n",
                 drive, cmd, MAX_ERRS - errs + 1, cylinder, head, sector, this_pass);
@@ -636,7 +573,7 @@ static void BFPROC do_readtrack(struct drive_infot *drivep, sector_t start)
 
         bios_set_ddpt(drivep->sectors);
         error = bios_disk_rw(BIOSHD_READ, num_sectors, drive,
-                                 cylinder, head, sector, TRACKSEG, 0);
+                                cylinder, head, sector, TRACKSEG, 0, drivep);
         if (error) {
             printk("bioshd(%x): track read retry #%d CHS %d/%d/%d count %d\n",
                 drive, errs + 1, cylinder, head, sector, num_sectors);
@@ -714,7 +651,7 @@ next_block:
             break;
         CHECK_REQUEST(req);
 
-        if (bioshd_initialized != 1) {
+        if (!bioshd_initialized) {
             end_request(0);
             continue;
         }
@@ -724,24 +661,23 @@ next_block:
 
         /* make sure it's a disk that we are dealing with. */
         if (drive > (DRIVE_FD0 + FD_DRIVES - 1) || drivep->heads == 0) {
-            printk("bioshd: non-existent drive\n");
-            end_request(0);
+            end_request(0);     /* will display I/O error */
             continue;
         }
 
         /* get request start sector and sector count */
-        count = req->rq_nr_sectors;
+        buf = req->rq_buffer;
         start = req->rq_sector;
+        count = req->rq_nr_sectors;
 
-        if (hd[minor].start_sect == -1U || start + count > hd[minor].nr_sects) {
-            printk("bioshd: sector %ld access beyond partition (%ld,%ld)\n",
-                start, hd[minor].start_sect, hd[minor].nr_sects);
+        if (part[minor].start_sect == NOPART || start + count > part[minor].nr_sects) {
+            printk("bioshd: sector %ld not in partition (%ld,%ld)\n",
+                start, part[minor].start_sect, part[minor].nr_sects);
             end_request(0);
             continue;
         }
-        start += hd[minor].start_sect;
+        start += part[minor].start_sect;
 
-        buf = req->rq_buffer;
         while (count > 0) {
             int num_sectors = 0;
 #ifdef CONFIG_TRACK_CACHE
@@ -755,14 +691,17 @@ next_block:
                 num_sectors = do_readwrite(drivep, start, buf, req->rq_seg,
                     req->rq_cmd, count);
 
+            if (start == 0 && req->rq_cmd == WRITE && (drivep - drive_info < DRIVE_FD0))
+                mbr_modified = 1;
+
             if (num_sectors == 0) {
                 end_request(0);
                 goto next_block;
             }
 
-            count -= num_sectors;
-            start += num_sectors;
             buf += num_sectors * drivep->sector_size;
+            start += num_sectors;
+            count -= num_sectors;
         }
         debug_bios("cache: hits %u total %u %lu%%\n", cache_hits, cache_tries,
             (long)cache_hits * 100L / cache_tries);

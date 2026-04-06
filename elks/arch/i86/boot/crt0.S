@@ -10,6 +10,7 @@
         .extern start_kernel
         .global early_putchar
 
+        .word   0,0,0,0,0,0,0,0 // 16-byte offset for HMA segment FFFF:0000 not in XMS
 _start:
 
 /*
@@ -45,15 +46,42 @@ _start:
 
         mov     %ds,%ax
         mov     %ax,%ss         // SS=ES=DS
-        mov     $tstack,%sp     // can't use kernel interrupt stack, must have temp stack
+        mov     $istack,%sp
 
         call    start_kernel    // no return
 
-        .global int3
-int3:   int     $3              // C breakpoint for emu86
+#if defined(CONFIG_ARCH_SWAN)
+early_putchar:
+1:      in      $0xB3,%al
+        test    $0x04,%al
+        jz      1b
+        mov     %sp,%bx
+        mov     2(%bx),%al
+        out     %al,$0xB1
         ret
-
-#ifndef CONFIG_ARCH_PC98
+#elif defined(CONFIG_ARCH_SOLO86)
+early_putchar:
+        mov   %sp,%bx
+        mov   2(%bx),%al
+        outb  %al,$0x22
+        ret
+#elif defined(CONFIG_ARCH_NECV25)
+#include <arch/necv25.h>
+early_putchar:
+        push  %bp
+        push  %ds
+        mov   %sp, %bp
+        mov   6(%bp), %al
+        movw  $NEC_HW_SEGMENT, %bx      // load DS to access memmory mapped CPU registers
+        movw  %bx, %ds
+1:      testb $0x80, %ds:NEC_STIC1      // wait for Tx ready
+        jz    1b
+        movb  $0x47, %ds:NEC_STIC1      // clear Tx ready flag
+        movb  %al, %ds:NEC_TXB1         // send char
+        pop   %ds
+        pop   %bp
+        ret
+#elif defined(CONFIG_ARCH_IBMPC) || defined(CONFIG_ARCH_8018X)
 early_putchar:
         mov   %sp,%bx
         mov   2(%bx),%al
@@ -80,7 +108,7 @@ early_putchar:
         .global _endbss
         .extern kernel_cs
         .extern kernel_ds
-        .extern tstack
+        .extern istack
 
 _endtext:
         .word   0

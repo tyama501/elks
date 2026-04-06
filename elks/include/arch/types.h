@@ -33,11 +33,6 @@ struct pt_regs {
     __u16       ax, bx, cx, dx, di, si, orig_ax, es, ds, sp, ss;
 };
 
-struct xregs {
-    __u16       cs;     /* code segment to use in arch_setup_user_stack()*/
-    __u16       ksp;    /* saved kernel SP used by twsitch()*/
-};
-
 /* ordering of saved registers on user stack after interrupt entry*/
 struct uregs {
     __u16       bp, ip, cs, f;
@@ -55,7 +50,7 @@ struct uregs {
  */
 
 /* <stddef.h> */
-typedef unsigned    size_t;
+typedef unsigned int    size_t;
 #define offsetof(__typ,__id) ((size_t)((char *)&(((__typ*)0)->__id) - (char *)0))
 
 /* <sys/types.h> */
@@ -76,6 +71,17 @@ typedef unsigned long   uintptr_t;
 typedef int             intptr_t;
 typedef unsigned int    uintptr_t;
 #endif
+#endif
+
+#ifdef __C86__
+ #ifndef _INTPTR_T_DEFINED
+ #define _INTPTR_T_DEFINED
+   typedef int             intptr_t;
+ #endif
+#ifndef _UINTPTR_T_DEFINED
+ #define _UINTPTR_T_DEFINED
+   typedef unsigned int    uintptr_t;
+ #endif
 #endif
 
 #endif

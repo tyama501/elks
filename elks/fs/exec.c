@@ -45,20 +45,22 @@
 #include <linuxmt/init.h>
 #include <linuxmt/debug.h>
 #include <linuxmt/memory.h>
-
 #include <arch/segment.h>
+#pragma GCC diagnostic ignored "-Wunused-label"
 
 /* for relocation debugging change to printk */
 #define debug_reloc     debug
 #define debug_reloc2    debug
 #define debug_os2       debug
 
-static int execve_aout(struct inode *inode, struct file *filp, char *sptr, size_t slen);
-static void finalize_exec(struct inode *inode, segment_s *seg_code, segment_s *seg_data,
-    word_t entry, int multisegment);
+static int FARPROC execve_aout(struct inode *inode, struct file *filp,
+    char *sptr, size_t slen);
+static void FARPROC finalize_exec(struct inode *inode, segment_s *seg_code,
+    segment_s *seg_data, word_t entry, int multisegment);
 
 #ifdef CONFIG_EXEC_OS2
-static int execve_os2(struct inode *inode, struct file *filp, char *sptr, size_t slen);
+static int FARPROC execve_os2(struct inode *inode, struct file *filp,
+    char *sptr, size_t slen);
 static segment_s *mm_table[MAX_SEGS]; /* holds process segments until exec guaranteed */
 #endif
 
@@ -134,8 +136,8 @@ int sys_execve(const char *filename, char *sptr, size_t slen)
  * Read relocations for a particular segment and apply them
  * Only IA-16 segment relocations are accepted
  */
-static int relocate(seg_t place_base, unsigned long rsize, segment_s *seg_code,
-               segment_s *seg_data, struct inode *inode, struct file *filp, size_t tseg)
+static int FARPROC relocate(seg_t place_base, unsigned long rsize, segment_s *seg_code,
+    segment_s *seg_data, struct inode *inode, struct file *filp, size_t tseg)
 {
     int retval = 0;
     seg_t save_ds = current->t_regs.ds;
@@ -186,7 +188,8 @@ static int relocate(seg_t place_base, unsigned long rsize, segment_s *seg_code,
 }
 #endif
 
-static int execve_aout(struct inode *inode, struct file *filp, char *sptr, size_t slen)
+static int FARPROC execve_aout(struct inode *inode, struct file *filp,
+    char *sptr, size_t slen)
 {
     register struct task_struct *currentp;
     int retval;
@@ -266,18 +269,8 @@ static int execve_aout(struct inode *inode, struct file *filp, char *sptr, size_
         if (esuph.msh_tbase != 0)
             goto error_exec3;
         base_data = esuph.msh_dbase;
-#ifdef CONFIG_EXEC_LOW_STACK
-        if (base_data & 0xf)
-            goto error_exec3;
-        if (base_data != 0)
-            debug("EXEC: New type executable stack = %x\n", base_data);
-
-        if (add_overflow(min_len, base_data, &min_len)) /* adds stack size*/
-            goto error_exec3;
-#else
         if (base_data != 0)
             goto error_exec3;
-#endif
         break;
 #endif /* CONFIG_EXEC_MMODEL*/
     default:
@@ -293,9 +286,6 @@ static int execve_aout(struct inode *inode, struct file *filp, char *sptr, size_
         goto error_exec3;
     case 1:
         len = min_len;
-#ifdef CONFIG_EXEC_LOW_STACK
-        if (!base_data)
-#endif
         {
             stack = mh.minstack? mh.minstack: INIT_STACK;
             if (add_overflow(len, stack, &len)) {       /* add stack */
@@ -335,14 +325,6 @@ static int execve_aout(struct inode *inode, struct file *filp, char *sptr, size_
         } else {
             stack = INIT_STACK;
             len = min_len;
-#ifdef CONFIG_EXEC_LOW_STACK
-            if (base_data) {
-                if (add_overflow(len, INIT_HEAP, &len)) {
-                    retval = -EFBIG;
-                    goto error_exec3;
-                }
-            } else
-#endif
             {
                 if (add_overflow(len, INIT_HEAP + INIT_STACK, &len)) {
                     retval = -EFBIG;
@@ -370,10 +352,25 @@ static int execve_aout(struct inode *inode, struct file *filp, char *sptr, size_
     /*
      *      Looks good. Get the memory we need
      */
+
     if (!seg_code) {
         bytes = (size_t)mh.tseg;
         paras = bytes_to_paras(bytes);
         retval = -ENOMEM;
+#ifdef CONFIG_ROMFS_FS
+        if (filp->f_inode->i_sb->s_type->type == FST_ROMFS
+            && !(filp->f_inode->i_mode & S_ISVTX)
+            && mh.hlen == EXEC_MINIX_HDR_SIZE) {
+            /* Point the code segment directly to in-memory ROMFS. This runs text
+             * segments directly from ROM, as opposed to making copies of them in
+             * RAM. Not supported for compressed or relocatable binaries.
+             */
+            seg_code = seg_alloc_fixed(filp->f_inode->u.romfs.seg + (filp->f_pos >> 4),
+                paras, SEG_FLAG_CSEG);
+            if (seg_code)
+                goto code_seg_found_exec;
+        }
+#endif
 #ifdef CONFIG_EXEC_COMPRESS
         if (esuph.esh_compr_tseg || esuph.esh_compr_ftseg) {
             if (esuph.esh_compr_tseg)
@@ -384,8 +381,8 @@ static int execve_aout(struct inode *inode, struct file *filp, char *sptr, size_
 #ifdef CONFIG_EXEC_MMODEL
         paras += bytes_to_paras((size_t)esuph.esh_ftseg);
 #endif
-        debug_reloc("EXEC: allocating %04x paras (%04x bytes) for text segment(s)\n", paras,
-            bytes);
+        debug_reloc("EXEC: allocating %04x paras (%04x bytes) for text segment(s)\n",
+            paras, bytes);
         seg_code = seg_alloc(paras, SEG_FLAG_CSEG);
         if (!seg_code) goto error_exec3;
         currentp->t_regs.ds = seg_code->base;
@@ -424,6 +421,8 @@ static int execve_aout(struct inode *inode, struct file *filp, char *sptr, size_
 #endif
     } else {
         seg_get (seg_code);
+
+  code_seg_found_exec:
 #ifdef CONFIG_EXEC_MMODEL
         filp->f_pos += esuph.esh_compr_tseg? esuph.esh_compr_tseg: (size_t)mh.tseg;
         filp->f_pos += esuph.esh_compr_ftseg? esuph.esh_compr_ftseg: (size_t)esuph.esh_ftseg;
@@ -488,20 +487,14 @@ static int execve_aout(struct inode *inode, struct file *filp, char *sptr, size_
     /* From this point, exec() will surely succeed */
 
     /* clear bss */
-    fmemsetb((char *)(size_t)mh.dseg + base_data, seg_data->base, 0, (size_t)mh.bseg);
+    if ((size_t)mh.bseg)
+        fmemsetb((char *)(size_t)mh.dseg + base_data, seg_data->base, 0, (size_t)mh.bseg);
 
     /* set data/stack limits and copy argc/argv */
     currentp->t_enddata = (size_t)mh.dseg + (size_t)mh.bseg + base_data;
     currentp->t_endseg = len;
-    currentp->t_minstack = stack;
-
-#ifdef CONFIG_EXEC_LOW_STACK
-    currentp->t_begstack = ((base_data   /* Just above the top of stack */
-        ? base_data
-        : currentp->t_endseg) - slen) & ~1;
-#else
+    currentp->t_regs.dx = currentp->t_minstack = stack;
     currentp->t_begstack = (currentp->t_endseg - slen) & ~1; /* force even SP and argv */
-#endif
     fmemcpyb((char *)currentp->t_begstack, seg_data->base, sptr, ds, slen);
 
     finalize_exec(inode, seg_code, seg_data, (word_t)mh.entry, 0);
@@ -521,8 +514,8 @@ static int execve_aout(struct inode *inode, struct file *filp, char *sptr, size_
 }
 
 /* seg_code is entry code segment, seg_data is main (auto stack/heap) data segment */
-static void finalize_exec(struct inode *inode, segment_s *seg_code, segment_s *seg_data,
-    word_t entry, int multisegment)
+static void FARPROC finalize_exec(struct inode *inode, segment_s *seg_code,
+    segment_s *seg_data, word_t entry, int multisegment)
 {
     struct task_struct *currentp = current;
     int i, n, v;
@@ -546,7 +539,6 @@ static void finalize_exec(struct inode *inode, segment_s *seg_code, segment_s *s
         currentp->mm[SEG_DATA] = seg_data;
     }
 
-    currentp->t_xregs.cs = seg_code->base;
     currentp->t_regs.ss = currentp->t_regs.es = currentp->t_regs.ds = seg_data->base;
     currentp->t_regs.sp = currentp->t_begstack;
 
@@ -599,11 +591,12 @@ static void finalize_exec(struct inode *inode, segment_s *seg_code, segment_s *s
      * Arrange for our return from sys_execve onto the new
      * user stack and to CS:entry of the user process.
      */
-    arch_setup_user_stack(currentp, entry);
+    arch_setup_user_stack(currentp, entry, seg_code->base);
 }
 
 #ifdef CONFIG_EXEC_OS2
-static int execve_os2(struct inode *inode, struct file *filp, char *sptr, size_t slen)
+static int FARPROC execve_os2(struct inode *inode, struct file *filp,
+    char *sptr, size_t slen)
 {
     int retval;
     unsigned int n, seg;

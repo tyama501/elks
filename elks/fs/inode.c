@@ -40,7 +40,7 @@ static int nr_free_inodes;
 #define SET_COUNT(i)
 #endif
 
-static void remove_inode_free(register struct inode *inode)
+static void FARPROC remove_inode_free(register struct inode *inode)
 {
     register struct inode *ino;
 
@@ -54,7 +54,7 @@ static void remove_inode_free(register struct inode *inode)
         (inode_llru = inode->i_prev)->i_next = NULL;
 }
 
-static void put_last_lru(register struct inode *inode)
+static void FARPROC put_last_lru(register struct inode *inode)
 {
     remove_inode_free(inode);
     inode->i_next = NULL;
@@ -80,18 +80,17 @@ void clear_inode(register struct inode *inode) /* and put_first_lru() */
 #if defined(CHECK_FREECNTS) && DEBUG_EVENT
 static void list_inode_status(void)
 {
-    int i = 1;
     int inuse = 0;
     struct inode *inode = inode_llru;
 
     do {
         if (inode->i_count || inode->i_dev || inode->i_dirt) {
             inode->i_path[sizeof(inode->i_path)-1] = '\0';
-            printk("\n#%2d: dev %p inode %5lu cnt %2d %c %06o %s", i, inode->i_dev,
-                (unsigned long)inode->i_ino, inode->i_count, inode->i_dirt? 'D':' ',
-                inode->i_mode, S_ISSOCK(inode->i_mode)? " [socket]": inode->i_path);
+            printk("\n#%2d: dev %p inode %5lu cnt %2d %c %06o %s", inode - inode_block,
+                inode->i_dev, (unsigned long)inode->i_ino, inode->i_count,
+                inode->i_dirt? 'D':' ', inode->i_mode,
+                S_ISSOCK(inode->i_mode)? " [socket]": inode->i_path);
         }
-        i++;
         if (inode->i_count) inuse++;
     } while ((inode = inode->i_prev) != NULL);
     printk("\nTotal inodes inuse %d/%d (%d free)\n", inuse, NR_INODE, nr_free_inodes);
@@ -131,7 +130,7 @@ void INITPROC inode_init(void)
  * much better for interrupt latency.
  */
 
-static void wait_on_inode(register struct inode *inode)
+static void FARPROC wait_on_inode(register struct inode *inode)
 {
     while (inode->i_lock) {
         inode->i_count++;
@@ -140,13 +139,13 @@ static void wait_on_inode(register struct inode *inode)
     }
 }
 
-static void lock_inode(register struct inode *inode)
+static void FARPROC lock_inode(register struct inode *inode)
 {
     wait_on_inode(inode);
     inode->i_lock = 1;
 }
 
-static void unlock_inode(register struct inode *inode)
+static void FARPROC unlock_inode(register struct inode *inode)
 {
     inode->i_lock = 0;
     wake_up((struct wait_queue *)inode);
@@ -167,7 +166,7 @@ void invalidate_inodes(kdev_t dev)
     } while ((inode = prev) != NULL);
 }
 
-static void write_inode(register struct inode *inode)
+static void FARPROC write_inode(register struct inode *inode)
 {
     register struct super_block *sb = inode->i_sb;
     if (inode->i_dirt) {
@@ -195,7 +194,7 @@ void sync_inodes(kdev_t dev)
     } while ((inode = inode->i_prev) != NULL);
 }
 
-static struct inode *get_empty_inode(void)
+static struct inode * FARPROC get_empty_inode(void)
 {
     register struct inode *inode;
 
@@ -280,7 +279,7 @@ static void set_ops(register struct inode *inode)
     inode->i_op = inop[(int)tabc[(inode->i_mode & S_IFMT) >> 12]];
 }
 
-static void read_inode(register struct inode *inode)
+static void FARPROC read_inode(register struct inode *inode)
 {
     struct super_block *sb = inode->i_sb;
     register struct super_operations *sop;

@@ -1,11 +1,12 @@
 
 ifndef TOPDIR
-$(error TOPDIR is not defined; did you mean to run './build.sh' instead?)
+$(error TOPDIR is not defined; run '. ./env.sh' then './build.sh' to build toolchain)
 endif
 
 include $(TOPDIR)/Make.defs
 
-.PHONY: all clean libc kconfig defconfig config menuconfig image images kclean
+.PHONY: all clean libc kconfig defconfig config menuconfig image images \
+    kimage kernel kclean owc c86
 
 all: .config include/autoconf.h
 	$(MAKE) -C libc all
@@ -53,6 +54,29 @@ libc:
 	$(MAKE) -C libc DESTDIR='$(TOPDIR)/cross' uninstall
 	$(MAKE) -C libc all
 	$(MAKE) -C libc DESTDIR='$(TOPDIR)/cross' install
+
+owclean:
+	$(MAKE) -C libc -f watcom.mk clean
+	$(MAKE) -C elkscmd owclean
+
+owlibc:
+	#$(MAKE) -C libc -f watcom.mk MODEL=c
+	$(MAKE) -C libc -f watcom.mk MODEL=s
+	$(MAKE) -C libc -f watcom.mk MODEL=m
+	$(MAKE) -C libc -f watcom.mk MODEL=l
+
+owc: owlibc
+	$(MAKE) -C elkscmd owc
+
+c86clean:
+	$(MAKE) -C libc -f c86.mk clean
+	$(MAKE) -C elkscmd c86clean
+
+c86libc:
+	$(MAKE) -C libc -f c86.mk
+
+c86: c86libc
+	$(MAKE) -C elkscmd c86
 
 elks/arch/i86/drivers/char/KeyMaps/config.in:
 	$(MAKE) -C elks/arch/i86/drivers/char/KeyMaps config.in

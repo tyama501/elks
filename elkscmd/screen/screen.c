@@ -28,20 +28,13 @@ static char ScreenVersion[] = "screen 2.0a.2 (ELKS) 30-Apr-2020";
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <termcap.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
-
-#ifdef ELKS
-#include <linuxmt/un.h>
-#else
-#include <linux/un.h>
-#define OPEN_MAX 1024
-extern char **environ;
-#endif
 
 #ifdef UTMP
 #include <utmp.h>
@@ -141,7 +134,7 @@ static char DefaultShell[] = "/bin/sh";
 static char DefaultPath[] = ":/bin:/usr/bin";
 static int TtyMode = 0622;
 static char SockPath[PATH_MAX];
-static char SockDir[] = "screen";
+static char SockDir[] = "scr";
 static char *SockNamePtr, *SockName;
 static int ServerSocket;
 static char *NewEnv[MAXARGS];
@@ -320,7 +313,7 @@ main(int ac, char **av)
     if ((home = getenv("HOME")) == 0)
         Msg(0, "$HOME is undefined.");
 
-    sprintf(SockPath, "%s/%s", home, SockDir);  /* SockDir = "screen" */
+    sprintf(SockPath, "%s/%s", home, SockDir);  /* SockDir = "scr" */
     if (stat(SockPath, &st) == -1) {
         if (errno == ENOENT) {
             if (mkdir(SockPath, 0700) == -1)
@@ -1399,14 +1392,14 @@ MakeServerSocket(void)
     a.sun_family = AF_UNIX;
     strcpy(SockNamePtr, SockName);
     strcpy(a.sun_path, SockPath);
-    if (connect(s, (struct sockaddr *)&a, strlen(SockPath) + 2) != -1) {
+    if (connect(s, (struct sockaddr *)&a, strlen(SockPath) + 1) != -1) {
         p = Filename(SockPath);
         Msg(0, "You have already a screen running on %s.\n\
 If it has been detached, try \"screen -r\".", p);
         /* NOTREACHED */
     }
     unlink(SockPath);
-    if (bind(s, (struct sockaddr *)&a, strlen(SockPath) + 2) == -1)
+    if (bind(s, (struct sockaddr *)&a, strlen(SockPath) + 1) == -1)
         Msg(errno, "bind");
     chown(SockPath, getuid(), getgid());
     if (listen(s, 5) == -1)
@@ -1425,7 +1418,7 @@ MakeClientSocket(int err)
     a.sun_family = AF_UNIX;
     strcpy(SockNamePtr, SockName);
     strcpy(a.sun_path, SockPath);
-    if (connect(s, (struct sockaddr *)&a, strlen(SockPath) + 2) == -1) {
+    if (connect(s, (struct sockaddr *)&a, strlen(SockPath) + 1) == -1) {
         if (err) {
             Msg(errno, "connect: %s", SockPath);
         } else {

@@ -141,6 +141,8 @@
  * v1.7 (april 2024 hs/@mellvik TLVC): Add support for ASTCLOCK
  * (AST SixPackPlus), seemingly the common choice in pre-AT
  * systems. Supports both NS and Ricoh chips.
+ * 
+ * v1.8 (14. Nov. 2025 swausd) Adapted for NEC V25 and DS3231
  */
 
 #ifdef CONFIG_ARCH_IBMPC
@@ -165,7 +167,7 @@ int verbose;
 void do_gettime(struct tm *);
 void do_settime(struct tm *);
 
-#if defined(CONFIG_ARCH_IBMPC) || defined(CONFIG_ARCH_8018X)
+#if defined(CONFIG_ARCH_IBMPC) || defined(CONFIG_ARCH_8018X) || defined(CONFIG_ARCH_SOLO86)
 void cmos_settime(struct tm *);
 void cmos_gettime(struct tm *);
 #endif
@@ -177,11 +179,23 @@ void pc98_write_calendar(unsigned int, unsigned int);
 void pc98_read_calendar(unsigned int, unsigned int);
 #endif
 
+#ifdef CONFIG_ARCH_SWAN
+void swan_rtc_write(unsigned char, unsigned char *, int);
+int swan_rtc_read(unsigned char, unsigned char *, int);
+
+void swan_gettime(struct tm *);
+void swan_settime(struct tm *);
+#endif
+
 #if AST_SUPPORT
 void ast_settime(struct tm *);
 void ast_gettime(struct tm *);
 int  ast_chiptype(void);
 int  cmos_probe(void);
+#endif
+
+#ifdef CONFIG_ARCH_NECV25
+#include "ds3231.h"
 #endif
 
 int usage(void)
@@ -272,6 +286,10 @@ int main(int argc, char **argv)
             astclock = 1;
         }
     }
+#endif
+
+#ifdef CONFIG_ARCH_NECV25
+    ds3231_init();
 #endif
 
     if (readit + writeit + setit > 1)
@@ -367,10 +385,28 @@ int main(int argc, char **argv)
     return 0;
 }
 
+static int bcd_hex(unsigned char bcd_data)
+{
+    return (bcd_data & 15) + (bcd_data >> 4) * 10;
+}
+
+static int hex_bcd(int hex_data)
+{
+    return ((hex_data / 10) << 4) + hex_data % 10;
+}
+
 /****************************************************************************/
+#if defined(CONFIG_ARCH_IBMPC) || defined(CONFIG_ARCH_8018X) || defined(CONFIG_ARCH_SOLO86)
+
 #if defined(CONFIG_ARCH_IBMPC) || defined(CONFIG_ARCH_8018X)
 #define CMOS_CMDREG     0x70
 #define CMOS_IOREG      0x71
+#endif
+
+#if defined(CONFIG_ARCH_SOLO86)
+#define CMOS_CMDREG     0x0C
+#define CMOS_IOREG      0x0E
+#endif
 
 void do_gettime(struct tm *tm)
 {
@@ -392,14 +428,14 @@ void do_settime(struct tm *tm)
             cmos_settime(tm);
 }
 
-#ifdef CONFIG_ARCH_IBMPC
+#if defined(CONFIG_ARCH_IBMPC) || defined(CONFIG_ARCH_SOLO86)
 unsigned char cmos_read(unsigned char reg)
 {
     register unsigned char ret;
 
     clr_irq();
-    outb_p(reg | 0x80, 0x70);
-    ret = inb_p(0x71);
+    outb_p(reg | 0x80, CMOS_CMDREG);
+    ret = inb_p(CMOS_IOREG);
     set_irq();
     return ret;
 }
@@ -407,8 +443,8 @@ unsigned char cmos_read(unsigned char reg)
 void cmos_write(unsigned char reg, unsigned char val)
 {
     clr_irq();
-    outb_p(reg | 0x80, 0x70);
-    outb_p(val, 0x71);
+    outb_p(reg | 0x80, CMOS_CMDREG);
+    outb_p(val, CMOS_IOREG);
     set_irq();
 }
 #endif
@@ -530,16 +566,6 @@ void pc98_write_calendar(unsigned int tm_seg, unsigned int tm_offset)
 
 }
 
-static int bcd_hex(unsigned char bcd_data)
-{
-    return (bcd_data & 15) + (bcd_data >> 4) * 10;
-}
-
-static int hex_bcd(int hex_data)
-{
-    return ((hex_data / 10) << 4) + hex_data % 10;
-}
-
 void pc98_gettime(struct tm *tm, unsigned char *timebuf)
 {
     tm->tm_sec = bcd_hex(timebuf[5]);
@@ -565,6 +591,102 @@ void pc98_settime(struct tm *tmp, unsigned char *timebuf)
             timebuf[0] = hex_bcd(tmp->tm_year - 100);
         else
             timebuf[0] = hex_bcd(tmp->tm_year);
+}
+#endif
+
+/****************************************************************************/
+#ifdef CONFIG_ARCH_SWAN
+/*
+ * FIXME: This code requires testing.
+ */
+#define RTC_DATA_PORT 0xCA
+#define RTC_CONTROL_PORT 0xCB
+#define RTC_READY 0x80
+#define RTC_ACTIVE 0x10
+
+void do_gettime(struct tm *tm)
+{
+    swan_gettime(tm);
+}
+
+void do_settime(struct tm *tm)
+{
+    swan_settime(tm);
+}
+
+void swan_rtc_write(unsigned char cmd, unsigned char *buf, int count)
+{
+    int i = 0;
+    unsigned int timeout = 0;
+    unsigned char status;
+
+    outb(buf[i++], RTC_DATA_PORT);
+    outb(cmd, RTC_CONTROL_PORT);
+
+    while (--timeout) {
+        status = inb(RTC_CONTROL_PORT);
+        if (!(status & 0x90)) break;
+        else if (status & 0x80) outb(buf[i++], RTC_DATA_PORT);
+        else if (status & 0x10) break;
+    }
+}
+
+int swan_rtc_read(unsigned char cmd, unsigned char *buf, int count)
+{
+    int i = 0;
+    unsigned int timeout = 0;
+    unsigned char status;
+
+    outb(cmd, RTC_CONTROL_PORT);
+
+    while (--timeout) {
+        status = inb(RTC_CONTROL_PORT);
+        if (!(status & 0x90)) break;
+        else if (status & 0x80) {
+           if (i < count) buf[i++] = inb(RTC_DATA_PORT);
+           else inb(RTC_DATA_PORT);
+        } else if (status & 0x10) break;
+    }
+
+    return i < count;
+}
+
+void swan_gettime(struct tm *tm)
+{
+    unsigned char timebuf[7];
+
+    swan_rtc_read(0x15, timebuf, 7);
+
+    tm->tm_sec = bcd_hex(timebuf[6]);
+    tm->tm_min = bcd_hex(timebuf[5]);
+    tm->tm_hour = bcd_hex(timebuf[4] & 0x3F);
+    tm->tm_wday = bcd_hex(timebuf[3]);
+    tm->tm_mday = bcd_hex(timebuf[2]);
+    tm->tm_mon = bcd_hex(timebuf[1]) - 1;
+    tm->tm_year = bcd_hex(timebuf[0]);
+    if (tm->tm_year < 70)
+        tm->tm_year += 100;  /* 70..99 => 1970..1999, 0..69 => 2000..2069 */
+}
+
+void swan_settime(struct tm *tmp)
+{
+    unsigned char timebuf[7];
+
+    timebuf[0] = 0x40;
+    swan_rtc_write(0x12, timebuf, 1);
+
+    timebuf[6] = hex_bcd(tmp->tm_sec);
+    timebuf[5] = hex_bcd(tmp->tm_min);
+    timebuf[4] = hex_bcd(tmp->tm_hour);
+    timebuf[3] = hex_bcd(tmp->tm_wday);
+    timebuf[2] = hex_bcd(tmp->tm_mday);
+    timebuf[1] = hex_bcd(tmp->tm_mon + 1);
+    if (tmp->tm_year >= 100)
+        timebuf[0] = hex_bcd(tmp->tm_year - 100);
+    else
+        timebuf[0] = hex_bcd(tmp->tm_year);
+
+    swan_rtc_write(0x14, timebuf, 7);
 }
 #endif
 
@@ -747,3 +869,29 @@ int cmos_probe(void)
     return 0;
 }
 #endif /* AST_SUPPORT */
+
+#ifdef CONFIG_ARCH_NECV25
+void do_gettime(struct tm *tm)
+{
+   tm->tm_sec  = bcd_hex(ds3231_read(REG_SEC));
+   tm->tm_min  = bcd_hex(ds3231_read(REG_MIN));
+   tm->tm_hour = bcd_hex(ds3231_read(REG_HOUR)  & 0x3f);
+
+   tm->tm_wday = bcd_hex(ds3231_read(REG_DAY)   & 0x07) - 1; 
+   tm->tm_mday = bcd_hex(ds3231_read(REG_DATE)  & 0x3f);
+   tm->tm_mon  = bcd_hex(ds3231_read(REG_MONTH) & 0x1f);
+   tm->tm_year = bcd_hex(ds3231_read(REG_YEAR));
+}
+
+void do_settime(struct tm *tm)
+{
+   ds3231_write(REG_SEC,   hex_bcd(tm->tm_sec));
+   ds3231_write(REG_MIN,   hex_bcd(tm->tm_min));
+   ds3231_write(REG_HOUR,  hex_bcd(tm->tm_hour));
+
+   ds3231_write(REG_DAY,   hex_bcd(tm->tm_wday + 1));
+   ds3231_write(REG_DATE,  hex_bcd(tm->tm_mday));
+   ds3231_write(REG_MONTH, hex_bcd(tm->tm_mon + 1));
+   ds3231_write(REG_YEAR,  hex_bcd(tm->tm_year));
+}
+#endif

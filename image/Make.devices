@@ -15,7 +15,7 @@ devices:
 
 ##############################################################################
 # Create frequently accessed /dev files first
-	$(MKDEV) /dev/console	c 4 254 1 1 0600
+	$(MKDEV) /dev/console	c 4 254 1 1 0622
 	$(MKDEV) /dev/tty1      c 4 0
 	$(MKDEV) /dev/ttyS0     c 4 64
 	$(MKDEV) /dev/fd0       b 3 32
@@ -64,8 +64,8 @@ devices:
 	$(MKDEV) /dev/hdc  b 3 16
 	$(MKDEV) /dev/hdc1 b 3 17
 	$(MKDEV) /dev/hdd  b 3 24
-	$(MKDEV) /dev/fd0  b 3 32
-	$(MKDEV) /dev/fd1  b 3 40
+#	$(MKDEV) /dev/fd0  b 3 32
+#	$(MKDEV) /dev/fd1  b 3 40
 
 ##############################################################################
 # Direct floppy devices.
@@ -81,6 +81,25 @@ devices:
 #	$(MKDEV) /dev/df0-2880   b 4 16
 
 ##############################################################################
+# Direct hard drive/ATA-CF devices.
+	$(MKDEV) /dev/cfa  b 5 0
+	$(MKDEV) /dev/cfa1 b 5 1
+	$(MKDEV) /dev/cfa2 b 5 2
+	$(MKDEV) /dev/cfa3 b 5 3
+	$(MKDEV) /dev/cfa4 b 5 4
+	$(MKDEV) /dev/cfa5 b 5 5
+	$(MKDEV) /dev/cfa6 b 5 6
+	$(MKDEV) /dev/cfa7 b 5 7
+	$(MKDEV) /dev/cfb  b 5 8
+	$(MKDEV) /dev/cfb1 b 5 9
+	$(MKDEV) /dev/cfb2 b 5 10
+	$(MKDEV) /dev/cfb3 b 5 11
+	$(MKDEV) /dev/cfb4 b 5 12
+
+#	$(MKDEV) /dev/dha  b 5 0
+#	$(MKDEV) /dev/dhb  b 5 8
+
+##############################################################################
 # Pseudo-TTY master devices. 
 
 	$(MKDEV) /dev/ptyp0 c 2 8
@@ -91,7 +110,7 @@ devices:
 ##############################################################################
 # Virtual consoles, pseudo-tty slaves and serial ports.
 
-	$(MKDEV) /dev/tty1	c 4 0
+#	$(MKDEV) /dev/tty1	c 4 0
 	$(MKDEV) /dev/tty2	c 4 1
 	$(MKDEV) /dev/tty3	c 4 2
 	$(MKDEV) /dev/tty4	c 4 3
@@ -107,11 +126,17 @@ devices:
 # /dev/tty is minor 255, /dev/console minor 254
 
 	$(MKDEV) /dev/tty       c 4 255 1 1 0666
-	$(MKDEV) /dev/console	c 4 254 1 1 0600
+#	$(MKDEV) /dev/console	c 4 254 1 1 0622
 
 # Serial ports, as detected by the ROM BIOS.
 
-	$(MKDEV) /dev/ttyS c 4 64 4
+	$(MKDEV) /dev/ttyS1 c 4 65
+	$(MKDEV) /dev/ttyS2 c 4 66
+	$(MKDEV) /dev/ttyS3 c 4 67
+
+# PS/2 mouse port
+
+	$(MKDEV) /dev/psaux c 4 32
 
 ##############################################################################
 # Parallel devices, as detected by the ROM BIOS.
@@ -140,7 +165,9 @@ endif
 ##############################################################################
 # ROM / Flash memory card
 
-#	$(MKDEV) /dev/rom b 6 0
+ifdef CONFIG_ROMCODE
+	$(MKDEV) /dev/rom b 6 0
+endif
 
 ##############################################################################
 # Direct PATA / IDE disks. (Not working)

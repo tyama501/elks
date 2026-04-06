@@ -10,6 +10,34 @@
  * Kernel tracing functions for consistency checking and debugging support
  */
 
+/* stringize the result of expansion of a macro argument */
+#define str(bytes)  str2(bytes)
+#define str2(bytes) #bytes
+
+/*
+ * Check that user SP is within proper range, called before every syscall.
+ */
+void check_ustack(void)
+{
+    segoff_t sp = current->t_regs.sp;
+    segoff_t brk = current->t_endbrk;
+    segoff_t stacklow = current->t_begstack - current->t_minstack;
+
+    if (sp < brk) {
+        printk("(%P)STACK OVERFLOW by %u\n", brk - sp);
+        printk("CURBREAK %x, SP %x\n", brk, sp);
+        do_exit(SIGSEGV);
+    }
+    if (sp < stacklow) {
+        /* notification only, allow process to continue */
+        printk("(%P)STACK USING %u UNUSED HEAP\n", stacklow - sp);
+    }
+    if (sp > current->t_begstack) {
+        printk("(%P)STACK UNDERFLOW: SP %x BEGSTACK %x\n", sp, current->t_begstack);
+        do_exit(SIGSEGV);
+    }
+}
+
 #ifdef CONFIG_TRACE
 
 /* The table describing the system calls has been moved to a separate
@@ -23,12 +51,8 @@ static struct sc_info *syscall_info(unsigned int callno)
 {
     struct sc_info *s;
 
-    if (callno < sizeof(elks_table1)/sizeof(struct sc_info)) {
-        s = &elks_table1[callno];
-        if (s) return s;
-    }
-    else if (callno < sizeof(elks_table2)/sizeof(struct sc_info) + START_TABLE2) {
-        s = &elks_table2[callno-START_TABLE2];
+    if (callno < sizeof(elks_table)/sizeof(struct sc_info)) {
+        s = &elks_table[callno];
         if (s) return s;
     }
     return &notimp;
@@ -85,33 +109,39 @@ pscl:
     }
     printk(")]");
 }
-
 #endif
 
-/* stringize the result of expansion of a macro argument - used in check_kstack */
-#define str(bytes)  str2(bytes)
-#define str2(bytes) #bytes
-
-#ifdef CHECK_KSTACK
-static void check_kstack(int n)
+#ifdef CHECK_ISTACK
+/* calc interrupt stack usage */
+void check_istack(void)
 {
     int i;
-    struct sc_info *s;
-    const char *warning = "";
-    static int max;
     static int maxistack;
 
-    /* calc interrupt stack usage */
-    for (i=0; i<ISTACK_BYTES/2; i++) {
+    for (i=0; i<INTRSTACK_BYTES/2; i++) {
         if (endistack[i] != 0)
             break;
     }
-    i = (ISTACK_BYTES/2 - i) << 1;
+    i = (INTRSTACK_BYTES/2 - i) << 1;
     if (i > maxistack) {
         maxistack = i;
-        printk("ISTACK NEW MAX %d\n", maxistack);
+        printk("ISTACK MAX %d\n", i);
     }
+}
+#endif
 
+#ifdef CHECK_KSTACK
+/* calculate kernel stack usage per system call */
+static void check_kstack(int n)
+{
+    struct sc_info *s;
+    const char *warning = "";
+    static int max;
+
+#ifdef CHECK_ISTACK
+    if (tracing & TRACE_ISTACK)
+        check_istack();
+#endif
     s = syscall_info(current->t_regs.orig_ax);
     if (s == &notimp)
         printk("KSTACK(%P) syscall %d NOTIMP\n", current->t_regs.orig_ax);
@@ -137,7 +167,7 @@ static void check_kstack(int n)
  */
 void trace_begin(void)
 {
-#if defined(CONFIG_STRACE) || defined(CHECK_KSTACK)
+#if defined(CHECK_STRACE) || defined(CHECK_KSTACK)
     if (tracing & (TRACE_STRACE|TRACE_KSTACK))
         memset(current->t_kstack, 0x55, KSTACK_BYTES-32);
 #endif
@@ -164,7 +194,7 @@ void trace_end(unsigned int retval)
     }
 
     n = 0;
-#if defined(CONFIG_STRACE) || defined(CHECK_KSTACK)
+#if defined(CHECK_STRACE) || defined(CHECK_KSTACK)
     if (tracing & (TRACE_STRACE|TRACE_KSTACK)) {
         for (; n<KSTACK_BYTES/2; n++) {
         if (current->t_kstack[n] != 0x5555)
@@ -174,28 +204,16 @@ void trace_end(unsigned int retval)
         if (n > max) max = n;
     }
 #endif
-
+#ifdef CHECK_STRACE
     if (tracing & TRACE_STRACE) {
         struct sc_info *s = syscall_info(current->t_regs.orig_ax);
         printk("[%P:%s/ret=%d,ks=%d/%d]\n", s->s_name, retval, n, max);
     }
+#endif
+#ifdef CHECK_KSTACK
     if (tracing & TRACE_KSTACK)
         check_kstack(n);
-}
-
-#if UNUSED
-void check_tstack(void)
-{
-    int i;
-
-    /* calc temp stack usage */
-    for (i=0; i<TSTACK_BYTES/2; i++) {
-        if (endtstack[i] != 0)
-            break;
-    }
-    i = (TSTACK_BYTES/2 - i) << 1;
-    printk("tstack usage %d\n", i);
-}
 #endif
+}
 
 #endif /* CONFIG_TRACE */

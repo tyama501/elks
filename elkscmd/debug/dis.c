@@ -25,6 +25,7 @@
 
 char f_ksyms;
 char f_syms;
+char f_fdinput;
 unsigned short textseg, ftextseg, dataseg;
 
 char * noinstrument getsymbol(int seg, int offset)
@@ -134,16 +135,33 @@ int disasm_file(char *filename)
     return 0;
 }
 
+int disasm_fd(int fd)
+{
+    int ip = 0;
+    int nextip;
+
+    infp = fdopen(fd, "r");
+    if (!infp)
+        return 1;
+
+    while (!feof(infp)) {
+        if (!f_asmout) printf("%04hx  ", ip);
+        nextip = disasm(textseg, ip, nextbyte_file, dataseg);
+        ip = nextip;
+    }
+    return 0;
+}
+
 void usage(void)
 {
-    printf("Usage: disasm [-k] [-a] [-s symfile] [[seg:off[#size] | filename]\n");
+    printf("Usage: disasm [-k][-a][-s symfile] [[seg:off[#size] | filename | -]\n");
     exit(1);
 }
 
 int main(int ac, char **av)
 {
     unsigned long seg = 0, off = 0;
-    int fd, ch;
+    int ch;
     char *symfile = NULL;
     long count = 22;
 
@@ -166,7 +184,9 @@ int main(int ac, char **av)
     }
     ac -= optind;
     av += optind;
-    if (ac < 1)
+    if (ac == 1 && **av == '-')
+            f_fdinput = 1;
+    else if (ac < 1)
         usage();
 
     if (symfile && !sym_read_symbols(symfile)) {
@@ -176,7 +196,7 @@ int main(int ac, char **av)
 
 #ifdef _M_I86
     if (f_ksyms) {
-        fd = open("/dev/kmem", O_RDONLY);
+        int fd = open("/dev/kmem", O_RDONLY);
         if (fd < 0
             || ioctl(fd, MEM_GETCS, &textseg) < 0
             || ioctl(fd, MEM_GETDS, &dataseg) < 0
@@ -188,6 +208,8 @@ int main(int ac, char **av)
     }
 #endif
 
+    if (f_fdinput)
+        return disasm_fd(0);
     if (strchr(*av, ':')) {
         sscanf(*av, "%lx:%lx#%ld", &seg, &off, &count);
 

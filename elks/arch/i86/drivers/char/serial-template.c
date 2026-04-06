@@ -65,6 +65,16 @@ static unsigned int divisors[] = {
 
 extern struct tty ttys[];
 
+/* printk console out */
+void rs_conout(dev_t dev, int c)
+{
+    struct serial_info *sp = &ports[MINOR(dev) - RS_MINOR_OFFSET];
+
+    while (!(inb(sp->io + UART_LSR) & UART_LSR_THRE))
+	continue;
+    outb(c, sp->io + UART_TX);
+}
+
 /* serial write - busy loops until transmit buffer available */
 static int rs_write(struct tty *tty)
 {
@@ -112,6 +122,7 @@ static void update_port(struct serial_info *port)
 {
     unsigned int cflags;	/* use smaller 16-bit width to save code*/
     unsigned divisor;
+    flag_t flags;
 
     /* set baud rate divisor, first lower, then higher byte */
     cflags = port->tty->termios.c_cflag & CBAUD;
@@ -125,6 +136,7 @@ static void update_port(struct serial_info *port)
     if (divisor != port->divisor) {
 	port->divisor = divisor;
 
+	save_flags(flags);
 	clr_irq();
 
 	/* Set the divisor latch bit */
@@ -137,7 +149,7 @@ static void update_port(struct serial_info *port)
 	/* Clear the divisor latch bit */
 	outb(port->lcr, port->io + UART_LCR);
 
-	set_irq();
+	restore_flags(flags);
     }
 }
 
@@ -181,16 +193,6 @@ static int rs_open(struct tty *tty)
     inb(port->io + UART_MSR);
 
     return 0;
-}
-
-/* note: this function will be called prior to serial_init if serial console set*/
-void rs_conout(dev_t dev, int c)
-{
-    struct serial_info *sp = &ports[MINOR(dev) - RS_MINOR_OFFSET];
-
-    while (!(inb(sp->io + UART_LSR) & UART_LSR_THRE))
-	continue;
-    outb(c, sp->io + UART_TX);
 }
 
 /* initialize UART, interrupts off */

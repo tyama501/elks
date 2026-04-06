@@ -1,4 +1,4 @@
-100 REM port from www.quitebasic.com/prj/games/snake
+100 REM port from www.quitebasic.com/prj/games/snake This version below is for CGA video mode and IBM PC
 200 MODE 0
 300 CLS
 400 PRINT "=== Snake and Dots ==="
@@ -11,7 +11,7 @@
 820 INPUT A$
 850 DIM G(325)
 900 REM === Initialize ===
-905 MODE 1
+905 MODE 4
 910 COLOR 3,0
 920 PLOT 0,0
 930 DRAW 240,0

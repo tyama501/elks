@@ -89,9 +89,20 @@ static unsigned int divisors_8MHz[] = {
     0				/*  0 = B230400 */
 };
 
-extern struct tty ttys[];
-
 static int rs_init_done = 0;
+
+/* printk console out */
+void rs_conout(dev_t dev, int c)
+{
+    struct serial_info *sp = &ports[MINOR(dev) - RS_MINOR_OFFSET];
+    jiff_t timeout = jiffies() + 4*HZ/100;  /* 40ms, 300 baud needs 33.3ms */
+
+    while (!(inb(sp->io + UART_LSR) & UART_LSR_THRE)) {
+	if (time_after(jiffies(), timeout))
+	    break;
+    }
+    outb(c, sp->io + UART_TX);
+}
 
 /* serial write - busy loops until transmit buffer available */
 static int rs_write(struct tty *tty)
@@ -100,10 +111,10 @@ static int rs_write(struct tty *tty)
     int i = 0;
 
     while (tty->outq.len > 0) {
-	unsigned long timeout = jiffies + 4*HZ/100; /* 40ms, 300 baud needs 33.3ms */
+	jiff_t timeout = jiffies() + 4*HZ/100;  /* 40ms, 300 baud needs 33.3ms */
 	/* Wait until transmitter hold buffer empty */
 	while (!(inb(port->io + UART_LSR) & UART_LSR_THRE)) {
-	    if (time_after(jiffies, timeout)) /* waits 40ms max, jiffies updated by hw timer */
+	    if (time_after(jiffies(), timeout)) /* waits 40ms max */
 	        break;
 	}
 	outb((char)tty_outproc(tty), port->io + UART_TX);
@@ -214,19 +225,6 @@ static int rs_open(struct tty *tty)
     inb(port->io + UART_MSR);
 
     return 0;
-}
-
-/* note: this function will be called prior to serial_init if serial console set*/
-void rs_conout(dev_t dev, int c)
-{
-    struct serial_info *sp = &ports[MINOR(dev) - RS_MINOR_OFFSET];
-    unsigned long timeout = jiffies + 4*HZ/100; /* 40ms, 300 baud needs 33.3ms */
-
-    while (!(inb(sp->io + UART_LSR) & UART_LSR_THRE)) {
-	if (time_after(jiffies, timeout)) /* waits 40ms max, jiffies updated by hw timer */
-	    break;
-    }
-    outb(c, sp->io + UART_TX);
 }
 
 /* initialize UART */

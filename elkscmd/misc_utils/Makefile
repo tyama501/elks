@@ -6,14 +6,17 @@ include $(BASEDIR)/Makefile-rules
 
 ###############################################################################
 
-#TODO: fix uncompress zcat lpfilter disabled
-PRGS = tar miniterm ed od hd time kilo mined sleep tty uuencode uudecode compress
+#TODO: fix uncompress zcat disabled
+PRGS = ecalc tar miniterm ed od hd time kilo mined sleep tty uuencode uudecode compress
 
 HOSTPRGS = hostcompress
 
 all: $(PRGS)
 
 host: $(HOSTPRGS)
+
+ecalc: ecalc.o
+	$(LD) $(LDFLAGS) -o ecalc ecalc.o $(LDLIBS)
 
 ed: ed.o
 	$(LD) $(LDFLAGS) -o ed ed.o $(LDLIBS)

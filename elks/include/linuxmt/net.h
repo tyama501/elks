@@ -27,7 +27,7 @@ struct socket {
     struct inode *inode;
     struct file *file;
 
-#if defined(CONFIG_UNIX) || defined(CONFIG_NANO)
+#if defined(CONFIG_UNIX)
     struct socket *conn;
     struct socket *iconn;
     struct socket *next;
@@ -63,12 +63,6 @@ struct proto_ops {
     int (*listen) ();
     int (*send) ();
     int (*recv) ();
-    int (*sendto) ();
-    int (*recvfrom) ();
-    int (*shutdown) ();
-    int (*setsocketopt) ();
-    int (*getsocketopt) ();
-    int (*fcntl) ();
 };
 #endif
 

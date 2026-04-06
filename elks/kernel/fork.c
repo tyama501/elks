@@ -1,18 +1,20 @@
 #include <linuxmt/config.h>
 #include <linuxmt/errno.h>
 #include <linuxmt/kernel.h>
+#include <linuxmt/string.h>
 #include <linuxmt/mm.h>
 #include <linuxmt/sched.h>
 #include <linuxmt/trace.h>
+#include <linuxmt/init.h>
 #include <linuxmt/debug.h>
 
 #include <arch/segment.h>
 
 int task_slots_unused;
 struct task_struct *next_task_slot;
-pid_t last_pid = -1;
+pid_t last_pid = 0;
 
-static pid_t get_pid(void)
+static pid_t FARPROC get_pid(void)
 {
     register struct task_struct *p;
 
@@ -46,21 +48,18 @@ struct task_struct *find_empty_process(void)
     t = next_task_slot;
     while (t->state != TASK_UNUSED) {
         if (++t >= &task[max_tasks])
-            t = &task[1];
+            t = &task[0];
     }
     next_task_slot = t;
     task_slots_unused--;
-    *t = *current;
+    if (current != idle_task)       /* duplicate current task data into new one */
+        memcpy(t, current, sizeof(struct task_struct));
     t->state = TASK_UNINTERRUPTIBLE;
     t->pid = get_pid();
-#ifdef CONFIG_CPU_USAGE
-    t->ticks = 0;
+    t->ticks = 0;                   /* for CONFIG_CPU_USAGE */
     t->average = 0;
-#endif
-#ifdef CHECK_KSTACK
-    t->kstack_max = 0;
+    t->kstack_max = 0;              /* for CHECK_KSTACK */
     t->kstack_prevmax = 0;
-#endif
     t->kstack_magic = KSTACK_MAGIC;
     t->next_run = t->prev_run = NULL;
     return t;

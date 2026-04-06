@@ -16,12 +16,13 @@
 #endif
 #endif
 
-#define ISTACK_BYTES    512     /* Size of interrupt stack */
-#define TSTACK_BYTES    128     /* Size of temp startup stack */
+#define INTRSTACK_BYTES 512     /* Size of interrupt stack */
+
+#define IDLESTACK_BYTES 160     /* Size of idle task stack (min 128) */
 
 #define KSTACK_GUARD    100     /* bytes before CHECK_KSTACK overflow warning */
 
-#define MAX_POLLFD      6       /* Maximum number of polled filedescs per process */
+#define MAX_POLLFD      10      /* Maximum number of polled filedescs per process */
 
 #define MAX_SEGS        5       /* Maximum number of application code/data segments */
 

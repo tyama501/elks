@@ -17,15 +17,15 @@ LOCALFLAGS += -Wno-implicit-int
 SRCS=	builtins.c cd.c dirent.c error.c eval.c exec.c expand.c input.c \
 	jobs.c mail.c main.c memalloc.c miscbltin.c mystring.c nodes.c \
 	options.c parser.c redir.c show.c signames.c syntax.c trap.c \
-	output.c var.c linenoise_elks.c autocomplete.c
+	output.c var.c
 
 OBJS=	builtins.o cd.o dirent.o error.o eval.o exec.o expand.o input.o \
 	jobs.o mail.o main.o memalloc.o miscbltin.o mystring.o nodes.o \
 	options.o parser.o redir.o show.o signames.o syntax.o trap.o \
-	output.o var.o init.o \
-	linenoise_elks.o autocomplete.o
+	output.o var.o init.o
 
-#OBJS += v7malloc.o
+# heap debugging using v7 debug malloc
+#OBJS += dmalloc.o
 
 # builtins must be manually added
 OBJS += bltin/echo.o
@@ -67,13 +67,13 @@ init.o: mkinit $(SRCS)
 	./mkinit '$(CC) -c $(CFLAGS) init.c' $(SRCS)
 
 mkinit: mkinit.c
-	gcc -O2 mkinit.c -o $@
+	gcc -std=c99 -O2 mkinit.c -o $@
 
 nodes.c nodes.h: mknodes nodetypes nodes.c.pat
 	./mknodes nodetypes nodes.c.pat
 
 mknodes: mknodes.c
-	gcc -O2 mknodes.c -o $@
+	gcc -std=c99 -O2 mknodes.c -o $@
 
 #signames.c signames.h: mksignames
 #	./mksignames
@@ -109,3 +109,4 @@ $(OBJS): error.h eval.h exec.h expand.h init.h input.h \
 	builtins.h nodes.h signames.h syntax.h
 
 bltin/expr.o bltin/operators.o:	bltin/operators.h
+bltin/operators.c: bltin/operators.h

@@ -210,6 +210,7 @@ int main(int argc, char **argv)
 
 	signal(SIGINT, catchint);
 	signal(SIGQUIT, catchquit);
+	signal(SIGTERM, SIG_IGN);
 	signal(SIGTSTP, SIG_IGN);
 
 	/* check if we are /bin/sh*/
@@ -321,6 +322,7 @@ static void readfile(char *name) {
 		}
 #endif
 
+		clearerr(fp);
 		if (fgets(buf, CMDLEN - 1, fp) == NULL) {
 			if (ferror(fp) && (errno == EINTR)) {
 				clearerr(fp);
@@ -560,10 +562,14 @@ trybuiltin(int wildargc, char **wildargv, int argc, char **argv)
 static void
 runcmd(char *cmd, int argc, char **argv)
 {
-	int		pid, status, ret;
+	int		pid, status, ret, signo;
 
 	endpwent();
 	endgrent();
+
+	while (waitpid(-1, &status, 0) != -1)   /* reap any spurious children */
+		continue;
+
 	/*
 	 * If a full shell is required, run 'sh -c cmd' unless we are the only shell.
 	 */
@@ -596,19 +602,20 @@ runcmd(char *cmd, int argc, char **argv)
 
 		if (pid) {
 			status = 0;
-			intcrlf = FALSE;
+			//intcrlf = FALSE;
 
-			while ((ret = waitpid(pid, &status, 0)) != pid)
+			while ((ret = waitpid(pid, &status, WUNTRACED)) != pid)
 				continue;
 
 			intcrlf = TRUE;
 			if ((status & 0xff) == 0)
 				return;
 
+			if (WIFSTOPPED(status))	/* signo in high byte when stopped*/
+				signo = status >> 8;
+			else signo = status & 0xff;
 			fprintf(stderr, "pid %d: %s (signal %d)\n", pid,
-				(status & 0x80) ? "core dumped" :
-				(((status & 0x7f) == SIGTSTP)? "stopped" : "killed"),
-				status & 0x7f);
+				WIFSTOPPED(status)? "stopped" : "killed", signo);
 
 			return;
 		}
@@ -872,61 +879,6 @@ catchquit()
 
 	if (intcrlf)
 		write(STDOUT, "\n", 1);
-}
-
-/* replacement fread to fix fgets not returning ferror/errno properly on SIGINT*/
-#include <sys/linksym.h>
-size_t fread(void *buf, size_t size, size_t nelm, FILE *fp)
-{
-   int len, v;
-   size_t bytes, got = 0;
-   __LINK_SYMBOL(__stdio_init);
-
-   v = fp->mode;
-
-   /* Want to do this to bring the file pointer up to date */
-   if (v & __MODE_WRITING)
-      fflush(fp);
-
-   /* Can't read or there's been an EOF or error then return zero */
-   if ((v & (__MODE_READ | __MODE_EOF | __MODE_ERR)) != __MODE_READ)
-      return 0;
-
-   /* This could be long, doesn't seem much point tho */
-   bytes = size * nelm;
-
-   len = fp->bufread - fp->bufpos;
-   if (len >= bytes)            /* Enough buffered */
-   {
-      memcpy(buf, fp->bufpos, bytes);
-      fp->bufpos += bytes;
-      return nelm;
-   }
-   else if (len > 0)            /* Some buffered */
-   {
-      memcpy(buf, fp->bufpos, len);
-      fp->bufpos += len;
-      got = len;
-   }
-
-   /* Need more; do it with a direct read */
-   len = read(fp->fd, (char *)buf + got, bytes - got);
-   /* Possibly for now _or_ later */
-#if 1	/* Fixes stdio when SIGINT received*/
-   if (intflag) {
-      len = -1;
-      errno = EINTR;
-   }
-#endif
-   if (len < 0)
-   {
-      fp->mode |= __MODE_ERR;
-      len = 0;
-   }
-   else if (len == 0)
-      fp->mode |= __MODE_EOF;
-
-   return (got + len) / size;
 }
 
 /* END CODE */

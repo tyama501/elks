@@ -41,13 +41,14 @@ copyrom:
 compress:
 	cd $(TOPDIR)/target/bin; elks-compress *
 
-images: images-minix images-hd images-fat
+.NOTPARALLEL: images images-minix images-fat images-hd
+images: images-minix images-fat images-hd
 
 images-minix: fd360-minix fd720-minix fd1200-minix fd1440-minix fd2880-minix
 
-images-fat: fd360-fat fd720-fat fd1200-fat fd1440-fat fd2880-fat hd32-fat hd32mbr-fat
+images-fat: fd360-fat fd720-fat fd1200-fat fd1440-fat fd2880-fat
 
-images-hd: hd32-minix hd32mbr-minix hd64-minix
+images-hd: hd32-minix hd32mbr-minix hd64-minix hd64mbr-minix hd32-fat hd32mbr-fat
 
 fd360-minix:
 	echo CONFIG_APPS_360K=y		> Config
@@ -104,7 +105,7 @@ fd2880-minix:
 	rm Config
 
 hd32-minix:
-	echo CONFIG_APPS_2880K=y	> Config
+	echo CONFIG_APPS_HD=y   	> Config
 	echo CONFIG_IMG_HD=y		>> Config
 	echo CONFIG_IMG_BLOCKS=31752 >> Config
 	echo CONFIG_IMG_SECT=63		>> Config
@@ -118,7 +119,7 @@ hd32-minix:
 	rm Config
 
 hd64-minix:
-	echo CONFIG_APPS_2880K=y	> Config
+	echo CONFIG_APPS_HD=y   	> Config
 	echo CONFIG_IMG_HD=y		>> Config
 	echo CONFIG_IMG_BLOCKS=65535 >> Config
 	echo CONFIG_IMG_SECT=63		>> Config
@@ -188,7 +189,7 @@ fd2880-fat:
 
 # FAT32 image
 hd32-fat:
-	echo CONFIG_APPS_2880K=y	> Config
+	echo CONFIG_APPS_HD=y   	> Config
 	echo CONFIG_IMG_HD=y		>> Config
 	echo CONFIG_IMG_BLOCKS=31752 >> Config
 	echo CONFIG_IMG_SECT=63		>> Config
@@ -205,6 +206,10 @@ hd32-fat:
 hd32mbr-minix: hd32-minix
 	dd if=/dev/zero bs=512 count=63 | cat - hd32-minix.img > hd32mbr-minix.img
 	setboot hd32mbr-minix.img -P63,16,63 -Sm $(HD_MBR_BOOT)
+
+hd64mbr-minix: hd64-minix
+	dd if=/dev/zero bs=512 count=63 | cat - hd64-minix.img > hd64mbr-minix.img
+	setboot hd64mbr-minix.img -P63,16,130 -Sm $(HD_MBR_BOOT)
 
 hd32mbr-fat: hd32-fat
 	dd if=/dev/zero bs=512 count=63 | cat - hd32-fat.img > hd32mbr-fat.img

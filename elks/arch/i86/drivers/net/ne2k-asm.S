@@ -272,6 +272,7 @@ dma_read:
 	push    %di
 	push    %es
 	push	%bx
+	pushfw		// save interrupt state
 	push	%ax
 
 	inc     %cx     // make byte count even
@@ -323,7 +324,7 @@ check_dma_r:
 
 	mov     $0x40,%al       // clear ISR (RDC bit only)
 	out     %al,%dx
-	sti			//Experimental - Enable INTR
+	popfw			//Experimental - reenable interrupt state
 
 	pop	%bx
 	pop	%es

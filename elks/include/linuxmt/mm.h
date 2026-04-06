@@ -42,6 +42,7 @@ int strlen_fromfs(void *,size_t);
 #define verify_area(mode,point,size) verfy_area(point,size)
 
 int verfy_area(void *,size_t);
+int seg_verify_area(pid_t pid, seg_t base, segoff_t offset);
 void put_user_char(unsigned char,void *);
 void put_user(unsigned short,void *);
 void put_user_long(unsigned long,void *);
@@ -54,6 +55,7 @@ int fs_memcmp(const void *,const void *,size_t);
 
 /* Memory allocation */
 
+segment_s * seg_alloc_fixed (seg_t, segext_t, word_t);
 segment_s * seg_alloc (segext_t, word_t);
 void seg_free (segment_s *);
 segment_s * seg_get (segment_s *);
@@ -62,8 +64,6 @@ segment_s * seg_dup (segment_s *);
 void seg_free_pid(pid_t pid);
 
 extern list_s _seg_all;
-
-void mm_get_usage (unsigned int * free, unsigned int * used);
 
 #endif /* __KERNEL__ */
 
