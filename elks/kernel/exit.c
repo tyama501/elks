@@ -7,9 +7,10 @@
 #include <linuxmt/sched.h>
 #include <linuxmt/errno.h>
 #include <linuxmt/mm.h>
+#include <linuxmt/init.h>
 #include <linuxmt/debug.h>
 
-static void reparent_children(void)
+static void FARPROC reparent_children(void)
 {
     register struct task_struct *p;
 
@@ -27,6 +28,12 @@ static void reparent_children(void)
             if (p->state != TASK_UNUSED) {
                 debug_wait("Reparenting orphan pid %d ppid %d to init\n",
                     p->pid, p->p_parent->pid);
+
+                /* release TTY process group and original session */
+                if (p->tty && (p->tty->pgrp == current->pid))
+                    p->tty->pgrp = 0;
+                p->session = p->pgrp = p->pid;
+
                 p->p_parent = &task[1];
                 p->ppid = task[1].pid;
             }
@@ -40,7 +47,7 @@ int sys_wait4(pid_t pid, int *status, int options, void *usage)
     register struct task_struct *p;
     int waitagain;
 
-    debug_wait("WAIT(%P) for %d %s\n", pid, (options & WNOHANG)? "nohang": "");
+    debug_wait("WAIT(%P) for %d opts %x\n", pid, options);
 
  for (;;) {
     waitagain = 0;
@@ -49,6 +56,11 @@ int sys_wait4(pid_t pid, int *status, int options, void *usage)
         if (p->p_parent == current && p->state != TASK_UNUSED) {
           if (p->state == TASK_ZOMBIE || p->state == TASK_STOPPED) {
             if (pid == (pid_t)-1 || p->pid == pid || (!pid && p->pgrp == current->pgrp)) {
+                if (p->state == TASK_STOPPED) {
+                    if (!p->exit_status || !(options & WUNTRACED))
+                        continue;
+                }
+
                 if (status) {
                     if (verified_memcpy_tofs(status, &p->exit_status, sizeof(int)))
                         return -EFAULT;
@@ -56,17 +68,18 @@ int sys_wait4(pid_t pid, int *status, int options, void *usage)
 
                 /* just return status on stopped state, don't release task*/
                 if (p->state == TASK_STOPPED)
-                    return p->pid;
-
-                p->state = TASK_UNUSED;     /* unassign task entry*/
-                next_task_slot = p;
-                task_slots_unused++;
+                    p->exit_status = 0;
+                else {
+                    p->state = TASK_UNUSED;     /* unassign task entry*/
+                    next_task_slot = p;
+                    task_slots_unused++;
+                }
 
                 debug_wait("WAIT(%P) got %d\n", p->pid);
                 return p->pid;
             }
         } else {
-            /* keep waiting while process has non-zombie/stopped children*/
+            /* keep waiting while process has non-zombie children*/
             debug_wait("WAIT(%P) again for pid %d state %d\n", p->pid, p->state);
             waitagain = 1;
         }
@@ -125,7 +138,7 @@ void do_exit(int status)
     /* Let the parent know */
     kill_process(current->ppid, SIGCHLD, 1);
 
-    /* Free the text, pwd, and root inodes */
+    /* Free the text, chroot, and current working directory inodes */
     iput(current->t_inode);
     iput(current->fs.root);
     iput(current->fs.pwd);
@@ -138,7 +151,8 @@ void do_exit(int status)
     current->state = TASK_ZOMBIE;
     wake_up(&parent->child_wait);
     schedule();
-    panic("sys_exit");
+    /* no return */
+    halt();
 }
 
 void sys_exit(int status)

@@ -98,7 +98,7 @@ static int nr_free_bh, nr_bh;
 
 #define buf_num(bh)     ((bh) - buffer_heads)   /* buffer number, for debugging */
 
-static void put_last_lru(struct buffer_head *bh)
+static void FARPROC put_last_lru(struct buffer_head *bh)
 {
     ext_buffer_head *ebh = EBH(bh);
 
@@ -148,7 +148,6 @@ static void INITPROC add_buffers(int nbufs, char *buf, ramdesc_t seg)
 #if defined(CHECK_FREECNTS) && DEBUG_EVENT
 static void list_buffer_status(void)
 {
-    int i = 1;
     int inuse = 0;
     int isinuse, j;
     struct buffer_head *bh = bh_llru;
@@ -167,14 +166,13 @@ static void list_buffer_status(void)
                     }
                 }
             }
-            printk("\n#%3d: buf %3d blk/dev %5ld/%p %c%c%c %smapped L%02d %d count %d",
-                i, buf_num(bh), ebh->b_blocknr, ebh->b_dev,
+            printk("\n#%3d: blk/dev %5ld/%p %c%c%c %smapped L%02d %d count %d",
+                buf_num(bh), ebh->b_blocknr, ebh->b_dev,
                 ebh->b_locked?  'L': ' ',
                 ebh->b_dirty?   'D': ' ',
                 ebh->b_uptodate?'U': ' ',
                 j? "  ": "un", j, ebh->b_mapcount, ebh->b_count);
         }
-        i++;
         if (isinuse) inuse++;
     } while ((bh = ebh->b_prev_lru) != NULL);
     printk("\nTotal L2 buffers inuse %d/%d (%d free)", inuse, nr_bh, nr_free_bh);
@@ -325,7 +323,7 @@ void invalidate_buffers(kdev_t dev)
     } while ((bh = ebh->b_prev_lru) != NULL);
 }
 
-static void sync_buffers(kdev_t dev, int wait)
+static void FARPROC sync_buffers(kdev_t dev, int wait)
 {
     struct buffer_head *bh = bh_lru;
     ext_buffer_head *ebh;
@@ -368,7 +366,7 @@ static void sync_buffers(kdev_t dev, int wait)
     debug_blk("SYNC_BUFFERS END %d wrote %d\n", wait, count);
 }
 
-static struct buffer_head *get_free_buffer(void)
+static struct buffer_head * FARPROC get_free_buffer(void)
 {
     struct buffer_head *bh = bh_lru;
     ext_buffer_head *ebh = EBH(bh);
@@ -436,7 +434,7 @@ void bforget(struct buffer_head *bh)
 }
 #endif
 
-static struct buffer_head *find_buffer(kdev_t dev, block32_t block)
+static struct buffer_head * FARPROC find_buffer(kdev_t dev, block32_t block)
 {
     struct buffer_head *bh = bh_llru;
     ext_buffer_head *ebh;

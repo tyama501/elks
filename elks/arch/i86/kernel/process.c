@@ -7,6 +7,7 @@
 #include <linuxmt/signal.h>
 #include <linuxmt/types.h>
 #include <linuxmt/memory.h>
+#include <linuxmt/init.h>
 
 #include <arch/segment.h>
 
@@ -43,45 +44,19 @@ int run_init_process_sptr(const char *cmd, char *sptr, int slen)
 }
 
 /*
- * Check that SP is within proper range, called before every syscall.
- */
-void stack_check(void)
-{
-    segoff_t sp = current->t_regs.sp;
-    segoff_t brk = current->t_endbrk;
-    segoff_t stacklow = current->t_begstack - current->t_minstack;
-
-    if (sp < brk) {
-        printk("(%P)STACK OVERFLOW by %u\n", brk - sp);
-        printk("curbreak %u, SP %u\n", current->t_endbrk, current->t_regs.sp);
-        do_exit(SIGSEGV);
-    }
-    if (sp < stacklow) {
-        /* notification only, allow process to continue */
-        printk("(%P)STACK USING %u UNUSED HEAP\n", stacklow - sp);
-    }
-    if (sp > current->t_begstack) {
-        printk("(%P)STACK UNDERFLOW\n");
-        do_exit(SIGSEGV);
-    }
-}
-
-/*
  *  Make task t fork into kernel space. We are in kernel mode
  *  so we fork onto our kernel stack.
  */
 
-void kfork_proc(void (*addr)())
+void INITPROC kfork_proc(void (*addr)())
 {
-    register struct task_struct *t;
+    struct task_struct *t;
 
     t = find_empty_process();
 
-    t->t_xregs.cs = kernel_cs;                  /* Run in kernel space */
-    /* All other t_regs values invalid for idle task or handlers interrupting idle task */
+    /* t_regs values are nonexistent for idle task or handlers interrupting idle task */
     t->t_regs.ds = t->t_regs.es = t->t_regs.ss = kernel_ds;
-    if (addr)
-        arch_build_stack(t, addr);
+    arch_build_stack(t, addr);
 }
 
 /*
@@ -89,7 +64,7 @@ void kfork_proc(void (*addr)())
  *  especially as our syscall entry doesnt use the user stack.
  */
 
-#define USER_FLAGS 0x3200               /* IPL 3, interrupt enabled */
+#define USER_FLAGS 0xf202               /* IPL 3, interrupts enabled, NEC V25 IBRK disabled */
 
 void put_ustack(register struct task_struct *t,int off,int val)
 {
@@ -104,10 +79,10 @@ unsigned get_ustack(register struct task_struct *t,int off)
 /*
  * Called by sys_execve()
  */
-void arch_setup_user_stack (register struct task_struct * t, word_t entry)
+void arch_setup_user_stack (register struct task_struct * t, word_t entry, seg_t cseg)
 {
     put_ustack(t, -2, USER_FLAGS);              /* Flags */
-    put_ustack(t, -4, (int) t->t_xregs.cs);     /* user CS */
+    put_ustack(t, -4, cseg);                    /* user CS */
     put_ustack(t, -6, entry);                   /* user entry point */
     put_ustack(t, -8, 0);                       /* user BP */
     t->t_regs.sp -= 8;
@@ -159,9 +134,10 @@ void arch_setup_sighandler_stack(register struct task_struct *t,
  * To start a child process we need to craft for it a kernel stack. The
  * child user stack must be the same than the caller user stack. The stack
  * state inside do_fork for the CALLER of sys_fork() looks like this:
+ *  [low address <---> high address ]
  *
  *             Kernel Stack                              User Stack
- *     ?? ip bx cx dx di si                              bp ip cs f
+ *     ?? ip bx cx dx di si orig_ax es ds sp ss          bp ip cs f
  *           --------------
  *           syscall params
  *
@@ -177,7 +153,7 @@ void arch_setup_sighandler_stack(register struct task_struct *t,
  *              si di bp IP: BCC case                    bp ip cs f
  *           si di es bp IP: IA16-GCC case               bp ip cs f
  *
- * with IP pointing to ret_from_syscall, and current->t_xregs.ksp pointing
+ * with IP pointing to ret_from_syscall, and current->t_ksp pointing
  * to si on the kernel stack. Values for the child stack si, di and bp can
  * be anything because their final value will be taken from the task structure
  * in the case of fork(), or will be initialized at the beginning of the target
@@ -193,12 +169,13 @@ void arch_build_stack(struct task_struct *t, void (*addr)())
     *tsp = (__u16)addr;                 /* Start execution address */
 #ifdef __ia16__
     *(tsp-2) = kernel_ds;               /* Initial value for ES register */
-    t->t_xregs.ksp = (__u16)(tsp - 4);  /* Initial value for SP register */
+    t->t_ksp = (__u16)(tsp - 4);        /* Initial value for SP register */
 #else
-    t->t_xregs.ksp = (__u16)(tsp - 3);  /* Initial value for SP register */
+    t->t_ksp = (__u16)(tsp - 3);        /* Initial value for SP register */
 #endif
 }
 
+#if UNUSED
 /*
  * Restart last system call.
  * Usage: instead of returning -ERESTARTSYS from kernel system call,
@@ -212,3 +189,4 @@ int restart_syscall(void)
     user_stack->ip -= 2;                /* backup to INT 80h*/
     return current->t_regs.orig_ax;     /* restore syscall # to user mode AX*/
 }
+#endif

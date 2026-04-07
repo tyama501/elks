@@ -15,26 +15,31 @@
 
 #include <arch/irq.h>
 
-#define idle_task task[0]
-
 struct task_struct *task;           /* dynamically allocated task array */
+struct task_struct *idle_task;      /* NOTE: valid only thru k_stack[IDLESTACK_BYTES/2] */
 struct task_struct *current;
 struct task_struct *previous;
 int max_tasks = MAX_TASKS;
 
 void add_to_runqueue(register struct task_struct *p)
 {
-    (p->prev_run = idle_task.prev_run)->next_run = p;
-    p->next_run = &idle_task;
-    idle_task.prev_run = p;
+#if UNUSED
+    if (p->next_run || p->prev_run)
+        panic("task already add_to_runq\n");
+    if (!idle_task->prev_run || !idle_task->next_run)
+        panic("idle add_to_runq");
+#endif
+    (p->prev_run = idle_task->prev_run)->next_run = p;
+    p->next_run = idle_task;
+    idle_task->prev_run = p;
 }
 
 static void del_from_runqueue(register struct task_struct *p)
 {
-#ifdef CHECK_SCHED
+#if UNUSED
     if (!p->next_run || !p->prev_run)
         panic("delrunq %d,%d", p->pid, p->state);   /* task not on run queue */
-    if (p == &idle_task)
+    if (p == idle_task)
         panic("delrunq idle");                      /* trying to sleep idle task */
 #endif
     (p->next_run->prev_run = p->prev_run)->next_run = p->next_run;
@@ -67,16 +72,18 @@ void schedule(void)
     prev = current;
 
 #ifdef CHECK_SCHED
-    if (_gint_count > 1) {      /* neither user nor idle task was running */
+    if (intr_count > 1) {   /* neither user nor idle task was running */
         /* Taking a timer IRQ during another IRQ or while in kernel space is
          * quite legal. We just dont switch then */
-         panic("schedule from int\n");
+         panic("sched from int\n");
     }
-#endif
 
     /* Disallow rescheduling during startup when idle task is the only task */
-    if ((int)last_pid <= 0)
+    if ((int)last_pid <= 0) {
+        printk("SCHED at startup\n");
         return;
+    }
+#endif
 
     /* We have to let a task exit! */
     if (prev->state == TASK_EXITING)
@@ -97,7 +104,7 @@ void schedule(void)
     next = prev->next_run;
     if (prev->state != TASK_RUNNING)
         del_from_runqueue(prev);
-    if (next == &idle_task)
+    if (next == idle_task)
         next = next->next_run;
     set_irq();
 
@@ -164,7 +171,7 @@ int del_timer(struct timer_list * timer)
     return 0;
 }
 
-static void run_timer_list(void)
+void run_timer_list(void)
 {
     struct timer_list *timer;
 
@@ -178,17 +185,6 @@ static void run_timer_list(void)
     set_irq();
 }
 
-void do_timer(void)
-{
-    jiffies++;
-
-    /***if (!((int) jiffies & 7))
-        need_resched = 1;***/       /* how primitive can you get? */
-
-    run_timer_list();
-
-}
-
 void INITPROC sched_init(void)
 {
     struct task_struct *t = &task[max_tasks];
@@ -200,14 +196,16 @@ void INITPROC sched_init(void)
         (--t)->state = TASK_UNUSED;
     } while (t > task);
 
-    current = task;
-    next_task_slot = task;
-    task_slots_unused = max_tasks;
 /*
  *  Now create task 0 to be ourself.
  */
-    kfork_proc(NULL);
-
+    t = idle_task;
     t->state = TASK_RUNNING;
     t->next_run = t->prev_run = t;
+    //memset(t->t_kstack, 0xff, IDLESTACK_BYTES);   /* for debugging idle stack size */
+    t->kstack_magic = KSTACK_MAGIC;
+
+    current = t;
+    next_task_slot = task;
+    task_slots_unused = max_tasks;
 }

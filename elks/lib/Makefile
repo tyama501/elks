@@ -35,7 +35,7 @@ include $(BASEDIR)/Makefile-rules
 #########################################################################
 # Objects to compile.
 
-OBJS  = chqueue.o string.o list.o heap.o
+OBJS  = chqueue.o string.o list.o heap.o hexdump.o
 
 #########################################################################
 # Commands:
@@ -47,9 +47,6 @@ lib.a:	$(OBJS)
 
 #########################################################################
 # Standard rules.
-
-distdir:
-	cp -pf Makefile *.c $(DISTDIR)/lib
 
 #########################################################################
 ### Dependencies:

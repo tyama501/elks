@@ -15,6 +15,8 @@
 #define RSINQ_SIZE	1024	/* serial input queue SLIP_MTU+128+8*/
 #define RSOUTQ_SIZE	80	/* serial output queue size*/
 
+#define MOUSEINQ_SIZE   64      /* PS/2 mouse input queue size */
+
 /*
  * Note: don't mess with NR_PTYS until you understand the tty minor
  * number allocation game...
@@ -23,18 +25,24 @@
 
 /* Predefined maximum number of tty character devices */
 
-#ifdef CONFIG_CONSOLE_DUAL
+#if defined(CONFIG_CONSOLE_DUAL)
 #define MAX_CONSOLES 4
+#elif defined(CONFIG_FAST_IRQ2_NECV25)
+#define MAX_CONSOLES 2
+#elif defined(CONFIG_FAST_IRQ1_NECV25)
+#define MAX_CONSOLES 1
 #else
 #define MAX_CONSOLES 3
 #endif
+
 #define MAX_PTYS     4
 
-#define TTY_MINOR_OFFSET 0
-#define PTY_MINOR_OFFSET 8
-#define RS_MINOR_OFFSET 64
+#define TTY_MINOR_OFFSET   0
+#define PTY_MINOR_OFFSET   8
+#define MOUSE_MINOR_OFFSET 32
+#define RS_MINOR_OFFSET    64
 
-#if defined(CONFIG_CONSOLE_DIRECT) || defined(CONFIG_CONSOLE_BIOS)
+#if defined(CONFIG_CONSOLE_DIRECT) || defined(CONFIG_CONSOLE_BIOS) || defined(CONFIG_ARCH_NECV25)
 #define NR_CONSOLES	MAX_CONSOLES
 #else
 #define NR_CONSOLES	1	/* headless*/
@@ -52,7 +60,13 @@
 #define NR_SERIAL	0
 #endif
 
-#define MAX_TTYS (NR_CONSOLES+NR_SERIAL+NR_PTYS)
+#ifdef CONFIG_MOUSE_PS2
+#define NR_MOUSE 	1
+#else
+#define NR_MOUSE 	0
+#endif
+
+#define MAX_TTYS (NR_CONSOLES+NR_SERIAL+NR_PTYS+NR_MOUSE)
 
 #define DCGET_GRAPH	(('D'<<8)+0x01)
 #define DCREL_GRAPH	(('D'<<8)+0x02)
@@ -79,16 +93,18 @@ struct tty_ops {
     void (*conout) (dev_t, int);
 };
 
-struct tty {
-    struct tty_ops *ops;
+struct tty {            /* NOTE: first member used in fastser.S driver */
+    struct ch_queue inq, outq;
     unsigned short minor;
     unsigned int flags;
-    struct ch_queue inq, outq;
-    struct termios termios;
     unsigned char ostate;
     unsigned char usecount;
     pid_t pgrp;
+    struct tty_ops *ops;
+    struct termios termios;
 };
+
+extern struct tty ttys[];
 
 extern int tty_intcheck(struct tty *,unsigned char);
 		/* Check for ctrl-C etc.. */
@@ -113,6 +129,8 @@ extern void tty_freeq(struct tty *tty);
 extern void set_serial_irq(int tty, int irq);
 
 extern void set_console(dev_t dev);
+
+extern void serial_bh(void);
 
 #ifdef CONFIG_CONSOLE_DIRECT
 extern unsigned VideoSeg;

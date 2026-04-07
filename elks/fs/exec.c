@@ -45,8 +45,8 @@
 #include <linuxmt/init.h>
 #include <linuxmt/debug.h>
 #include <linuxmt/memory.h>
-
 #include <arch/segment.h>
+#pragma GCC diagnostic ignored "-Wunused-label"
 
 /* for relocation debugging change to printk */
 #define debug_reloc     debug
@@ -352,10 +352,25 @@ static int FARPROC execve_aout(struct inode *inode, struct file *filp,
     /*
      *      Looks good. Get the memory we need
      */
+
     if (!seg_code) {
         bytes = (size_t)mh.tseg;
         paras = bytes_to_paras(bytes);
         retval = -ENOMEM;
+#ifdef CONFIG_ROMFS_FS
+        if (filp->f_inode->i_sb->s_type->type == FST_ROMFS
+            && !(filp->f_inode->i_mode & S_ISVTX)
+            && mh.hlen == EXEC_MINIX_HDR_SIZE) {
+            /* Point the code segment directly to in-memory ROMFS. This runs text
+             * segments directly from ROM, as opposed to making copies of them in
+             * RAM. Not supported for compressed or relocatable binaries.
+             */
+            seg_code = seg_alloc_fixed(filp->f_inode->u.romfs.seg + (filp->f_pos >> 4),
+                paras, SEG_FLAG_CSEG);
+            if (seg_code)
+                goto code_seg_found_exec;
+        }
+#endif
 #ifdef CONFIG_EXEC_COMPRESS
         if (esuph.esh_compr_tseg || esuph.esh_compr_ftseg) {
             if (esuph.esh_compr_tseg)
@@ -366,8 +381,8 @@ static int FARPROC execve_aout(struct inode *inode, struct file *filp,
 #ifdef CONFIG_EXEC_MMODEL
         paras += bytes_to_paras((size_t)esuph.esh_ftseg);
 #endif
-        debug_reloc("EXEC: allocating %04x paras (%04x bytes) for text segment(s)\n", paras,
-            bytes);
+        debug_reloc("EXEC: allocating %04x paras (%04x bytes) for text segment(s)\n",
+            paras, bytes);
         seg_code = seg_alloc(paras, SEG_FLAG_CSEG);
         if (!seg_code) goto error_exec3;
         currentp->t_regs.ds = seg_code->base;
@@ -406,6 +421,8 @@ static int FARPROC execve_aout(struct inode *inode, struct file *filp,
 #endif
     } else {
         seg_get (seg_code);
+
+  code_seg_found_exec:
 #ifdef CONFIG_EXEC_MMODEL
         filp->f_pos += esuph.esh_compr_tseg? esuph.esh_compr_tseg: (size_t)mh.tseg;
         filp->f_pos += esuph.esh_compr_ftseg? esuph.esh_compr_ftseg: (size_t)esuph.esh_ftseg;
@@ -522,7 +539,6 @@ static void FARPROC finalize_exec(struct inode *inode, segment_s *seg_code,
         currentp->mm[SEG_DATA] = seg_data;
     }
 
-    currentp->t_xregs.cs = seg_code->base;
     currentp->t_regs.ss = currentp->t_regs.es = currentp->t_regs.ds = seg_data->base;
     currentp->t_regs.sp = currentp->t_begstack;
 
@@ -575,7 +591,7 @@ static void FARPROC finalize_exec(struct inode *inode, segment_s *seg_code,
      * Arrange for our return from sys_execve onto the new
      * user stack and to CS:entry of the user process.
      */
-    arch_setup_user_stack(currentp, entry);
+    arch_setup_user_stack(currentp, entry, seg_code->base);
 }
 
 #ifdef CONFIG_EXEC_OS2

@@ -4,9 +4,11 @@ include $(BASEDIR)/Makefile-rules
 
 ###############################################################################
 
-###############################################################################
+LOCALFLAGS = -DELKS_VERSION=\"$(ELKS_VERSION)\"
 
 ELKS_LIB=$(ELKS_DIR)/arch/i86/lib
+
+###############################################################################
 
 # clock enabled and has direct I/O port access
 # knl, insmod removed as useless
@@ -81,8 +83,13 @@ meminfo: meminfo.o $(TINYPRINTF)
 who: who.o
 	$(LD) $(LDFLAGS) -o who who.o $(LDLIBS)
 
+ifeq ($(CONFIG_ARCH_NECV25), y)
+clock: clock.o ds3231.o i2c-ll.o 
+	$(LD) $(LDFLAGS) -o clock clock.o ds3231.o i2c-ll.o $(LDLIBS)
+else
 clock: clock.o
 	$(LD) $(LDFLAGS) -o clock clock.o $(LDLIBS)
+endif
 
 exitemu: exitemu.o
 	$(LD) $(LDFLAGS) -o exitemu exitemu.o $(LDLIBS)

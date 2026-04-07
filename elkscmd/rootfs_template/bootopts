@@ -8,7 +8,7 @@
 #comirq=,,7,10
 #umb=0xC000:0x800,0xD000:0x1000
 hma=kernel
-xms=on
+#xms=on
 #xms=int15
 #xmsbuf=0
 #disable=hda,cfa,df0,fd0
@@ -31,5 +31,7 @@ xms=on
 #FTRACE=1
 #net=ne0
 #debug=1
+#istack
 #console=ttyS0,19200 3
 #MOUSE_PORT=/dev/ttyS1
+#DEBUG_PORT=none

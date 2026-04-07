@@ -23,7 +23,7 @@
 #ifdef CONFIG_ARCH_IBMPC
 #define MAX_SERIAL              4               /* max number of serial tty devices*/
 #define SETUP_VID_COLS          setupb(7)       /* BIOS video # columns */
-#define SETUP_VID_LINES         setupb(14)      /* BIOS video # lines */
+#define SETUP_VID_LINES         25              /* video # lines */
 #define SETUP_CPU_TYPE          setupb(0x20)    /* processor type */
 #define SETUP_MEM_KBYTES        setupw(0x2a)    /* base memory in 1K bytes */
 #define SETUP_XMS_KBYTES        setupw(0x1ea)   /* xms memory in 1K bytes */
@@ -35,6 +35,9 @@
 #define SYS_CAPS                (CAP_PC_AT)
 #endif
 #define UTS_MACHINE             "ibmpc i8086"
+
+/* temp always enable experimental PS/2 mouse driver for IBM PC */
+#define CONFIG_MOUSE_PS2
 
 /* The following can be set for minimal systems or for QEMU emulation testing:
  * 10 buffers (@20 = 200), 2 ttyq (@80 = 160), 4k L1 cache, 512 heap free,
@@ -51,9 +54,9 @@
 #endif /* CONFIG_ARCH_IBMPC */
 
 #ifdef CONFIG_ARCH_PC98
-#define MAX_SERIAL              1       /* max number of serial tty devices*/
-#define SETUP_VID_COLS          80      /* video # columns */
-#define SETUP_VID_LINES         25      /* video # lines */
+#define MAX_SERIAL              1               /* max number of serial tty devices*/
+#define SETUP_VID_COLS          80              /* video # columns */
+#define SETUP_VID_LINES         25              /* video # lines */
 #define SETUP_CPU_TYPE          setupb(0x20)    /* processor type */
 #define SETUP_MEM_KBYTES        setupw(0x2a)    /* base memory in 1K bytes */
 #define SETUP_XMS_KBYTES        setupw(0x1ea)   /* xms memory in 1K bytes */
@@ -84,10 +87,30 @@
 #define SETUP_PART_OFFSETHI     0       /* partition offset high word */
 #define SYS_CAPS                0       /* no XT/AT capabilities */
 #define UTS_MACHINE             "8018x"
-
 #define CONFIG_8018X_FCPU       16
 #define CONFIG_8018X_EB
+#endif /* CONFIG_ARCH_8018X */
+
+#ifdef CONFIG_ARCH_NECV25
+#define SETUP_VID_COLS          80      /* video # columns */
+#define SETUP_VID_LINES         25      /* video # lines */
+#define SETUP_CPU_TYPE          setupb(0x20)    /* processor type */
+#define SETUP_MEM_KBYTES        512     /* base memory in 1K bytes */
+#define SETUP_XMS_KBYTES        0       /* xms memory in 1K bytes */
+#define SETUP_ROOT_DEV          0x0600  /* root device ROMFS */
+#define SETUP_ELKS_FLAGS        0       /* flags for root device type */
+#define SETUP_PART_OFFSETLO     0       /* partition offset low word */
+#define SETUP_PART_OFFSETHI     0       /* partition offset high word */
+#define SYS_CAPS                0       /* no XT/AT capabilities */
+#define UTS_MACHINE             "NECV25"
+#define CONFIG_NECV25_FCPU      22118400UL /* external CPU crystal clock in Hz 14745600UL or 22118400UL */
+#define CONFIG_DEF_BAUD         B115200
+#define CONFIG_FAST_IRQ1_NECV25         /* Serial 1 */
+#ifndef CONFIG_HW_SPI                   /* HW SPI uses Serial 0, so no console on this port */
+#define CONFIG_FAST_IRQ2_NECV25         /* Serial 0 as console, if no HW SPI configured */
 #endif
+#define IBRK_VERBOSE_MODE       1       /* 0/1 no output / output of a message on IBRK exceptions */
+#endif /* CONFIG_ARCH_NECV25 */
 
 #ifdef CONFIG_ARCH_SWAN
 #define MAX_SERIAL              1       /* max number of serial tty devices*/

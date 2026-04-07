@@ -1,0 +1,24 @@
+BASEDIR=..
+COMPILER=WATCOM
+
+include $(BASEDIR)/Makefile-rules
+
+###############################################################################
+
+LOCALFLAGS = -Dlint -DELKS=1 -D__huge=
+
+###############################################################################
+
+PRGS = fsck-dos.os2
+OBJS = boot.obj check.obj dir.obj fat.obj main.obj mem.obj
+
+all: $(PRGS)
+
+$(PRGS): $(OBJS)
+	$(LD) -o $@ $(LDFLAGS) $^ $(LDLIBS)
+
+install: all
+	$(INSTALL) $(PRGS) $(DESTDIR)/bin
+
+clean:
+	$(RM) $(PRGS) *.obj *.os2

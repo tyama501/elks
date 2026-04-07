@@ -21,6 +21,10 @@
 /* enable for async callback testing, requires CONFIG_ASYNCIO */
 //#define IODELAY     (5*HZ/100)  /* async time delay 5/100 sec = 50msec */
 
+#if defined(IODELAY) && !defined(CONFIG_ASYNCIO)
+#error  SSD IOTEST driver requires CONFIG_ASYNCIO
+#endif
+
 jiff_t ssd_timeout;
 
 sector_t ssd_num_sects;         /* max # sectors on SSD device */
@@ -70,6 +74,10 @@ static int ssd_open(struct inode *inode, struct file *filp)
 #endif
     ++access_count;
     inode->i_size = ssd_num_sects << 9;
+    /* limit inode size to 2GB for num_sects >= 4MB (2^22) */
+    if (ssd_num_sects >= 0x00400000L)   /* 2^22*/
+        inode->i_size = 0x7ffffffL;     /* 2^31 - 1*/
+
     return 0;
 }
 

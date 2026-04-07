@@ -54,6 +54,7 @@
 #include <linuxmt/debug.h>
 #include <linuxmt/prectimer.h>
 #include <arch/io.h>
+#include <arch/irq.h>
 
 /* hardware controller access modes, override using xtide= in /bootopts */
 #define MODE_ATA        0       /* standard - ATA at ports 0x1F0/0x3F6 */
@@ -95,6 +96,7 @@ static unsigned int xlate_XTIDEv2[8] = {
 
 /* wait loop 10ms ticks while busy waiting */
 #define WAIT_50MS   (5*HZ/100)      /* 5/100 sec = 50ms while busy */
+#define WAIT_1SEC   (1*HZ)          /* 1 sec wait for identify */
 #define WAIT_10SEC  (10*HZ)         /* 10 sec wait for read/write */
 
 /* end of configurable options */
@@ -132,9 +134,9 @@ static void ATPROC OUTB(unsigned int byte, int reg)
 /* delay 10ms */
 static void ATPROC delay_10ms(void)
 {
-    unsigned long timeout = jiffies + 1 + 1;    /* guarantee at least 10ms interval */
+    jiff_t timeout = jiffies() + 1 + 1; /* guarantee at least 10ms interval */
 
-    while (!time_after(jiffies, timeout))
+    while (!time_after(jiffies(), timeout))
         continue;
 }
 
@@ -143,7 +145,7 @@ static void ATPROC delay_10ms(void)
  */
 static int ATPROC ata_wait(unsigned int ticks)
 {
-    unsigned long timeout = jiffies + ticks + 1;
+    jiff_t timeout = jiffies() + ticks + 1;
     unsigned char status;
 
     do
@@ -155,7 +157,7 @@ static int ATPROC ata_wait(unsigned int ticks)
         if ((status & ATA_STATUS_BSY) == 0)
             return 0;
 
-    } while (!time_after(jiffies, timeout));
+    } while (!time_after(jiffies(), timeout));
 
     return -ENXIO;
 }
@@ -307,7 +309,7 @@ static int ATPROC ata_select(unsigned int drive, unsigned int cmd, unsigned long
 static int ATPROC ata_cmd(unsigned int drive, unsigned int cmd, unsigned long sector,
     unsigned int count)
 {
-    int error;
+    int error, wait;
     unsigned char status;
 
 
@@ -327,7 +329,13 @@ static int ATPROC ata_cmd(unsigned int drive, unsigned int cmd, unsigned long se
 
     // wait for drive to be not-busy
 
-    error = ata_wait(cmd == ATA_CMD_READ? WAIT_10SEC: WAIT_50MS);
+
+    switch (cmd) {
+    case ATA_CMD_READ:  wait = WAIT_10SEC; break;
+    case ATA_CMD_ID:    wait = WAIT_1SEC;  break;
+    default:            wait = WAIT_50MS;  break;
+    }
+    error = ata_wait(wait);
     if (error)
         return error;
 
@@ -361,8 +369,8 @@ static int ATPROC ata_identify(unsigned int drive, unsigned char __far *buf)
     error = ata_cmd(drive, ATA_CMD_ID, 0, 0);
     if (error)
     {
-        printk("cf%c: not found at %x/%x (%d) xtide=%d,%d\n",
-            drive+'a', ata_base_port, ata_ctrl_port, error, ata_mode, xfer_mode);
+        printk("cf%c: ATA at %x/%x xtide=%d,%d not found (%d)\n",
+            drive+'a', ata_base_port, ata_ctrl_port, ata_mode, xfer_mode, error);
         return error;
     }
 
@@ -387,6 +395,10 @@ int ATPROC ata_reset(void)
 
 #ifdef CONFIG_ARCH_SOLO86
     ata_mode = MODE_SOLO86;
+#endif
+#ifdef CONFIG_ARCH_NECV25
+    ata_mode = MODE_XTIDEv2;
+    xfer_mode = XFER_8_XTCF;
 #endif
 #if EMUL_XTCF
     xfer_mode = XFER_8_XTCF;
@@ -434,10 +446,10 @@ int ATPROC ata_reset(void)
     byte = INB(ATA_REG_SELECT);
     OUTB(0xA0, ATA_REG_SELECT);
     delay_10ms();
-    if (INB(ATA_REG_SELECT) != 0xA0)    // FIXME try probe w/message only for now
+    if (INB(ATA_REG_SELECT) != 0xA0)    // probe fail doesn't stop driver reset for now
     {
-        printk("cf: probe fail at %x/%x (%x) xtide=%d\n",
-            ata_base_port, ata_ctrl_port, byte, ata_mode);
+        printk("cf:  ATA at %x/%x xtide=%d,%d probe fail (%x)\n",
+            ata_base_port, ata_ctrl_port, ata_mode, xfer_mode, byte);
         OUTB(byte, ATA_REG_SELECT);
         //return -ENODEV;
     }

@@ -429,10 +429,10 @@ input_for_header (void)
 	    set_scn (&ftext, &ftext_sh, scn, shdr, "far text", sidx);
 	  else if (strcmp (name, ".data") == 0)
 	    set_scn (&data, &data_sh, scn, shdr, "data", sidx);
+	  else if (strcmp (name, ".bss") == 0)
+	    set_scn (&bss, &bss_sh, scn, shdr, "BSS", sidx);
 	  else if (shdr->sh_size != 0 && (shdr->sh_flags & SHF_ALLOC) != 0)
-	    error ("stray SHT_PROGBITS SHF_ALLOC section %#zx `%s'", sidx,
-								     name);
-
+	    error ("stray SHT_PROGBITS SHF_ALLOC section %#zx `%s'", sidx, name);
 	  break;
 
 	case SHT_NOBITS:

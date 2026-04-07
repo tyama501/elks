@@ -39,12 +39,12 @@
 ! index
 !	...
 !	4:	display page, 1 byte UNUSED
-!	6:	video mode, 1 byte
+!	6:	video mode, 1 byte UNUSED
 !	7:	screen_cols, 1 byte
-!	8:	video data, 2 bytes
-!	10:	mono/color, video memory size, 2 bytes 
-!	14:	screen_lines, 1 byte
-!	15:	VGA present, 1 byte
+!	8:	video data, 2 bytes UNUSED
+!	10:	mono/color, video memory size, 2 bytes UNUSED
+!	14:	screen_lines, 1 byte UNUSED
+!	15:	VGA present, 1 byte UNUSED
 !	0x20:	cpu_type	byte Processor type
 !			0  = 8088
 !			1  = 8086
@@ -893,44 +893,14 @@ arch_get_mem:
 	ret
 
 // Set INITSEG values for IBM PC
-// Determine display type using INT 10h AH=12 and INT 10h AH=1A
-// Get display page and mode using INT 10h AH=0F
+// Get display columns using INT 10h AH=0F
 // Determine size of main memory using INT 12h
 // FIXME move to separate setup-bios.S file or individual drivers
 
 arch_set_initseg:
-
-#ifdef CONFIG_HW_VGA
-// check for EGA/VGA and some config parameters
-	mov	$0x12,%ah	// Get video data
-	mov	$0x10,%bl
+	mov	$0x0f,%ah       // get video state
 	int	$0x10
-	mov	%ax,8
-	mov	%bx,10
-	mov	%cx,12
-	mov	$0x5019,%ax
-	cmp	$0x10,%bl
-	je	novga
-	mov	$0x1a00,%ax	// Added check for EGA/VGA discrimination
-	int	$0x10
-	mov	%ax,%bx
-	mov	$0x5019,%ax
-	movb	$0,15		// by default, no VGA
-	cmp	$0x1a,%bl	// 1a means VGA, anything else EGA or lower
-	jne	novga
-	movb	$1,15		// we've detected a VGA
-#else
-        movb  $0,15		// no VGA in system
-        mov   $25,%al		// height of display in rows
-#endif /* CONFIG_HW_VGA*/
-
-novga:	mov	%al,14		// CGA 25 rows
-
-// Get video-card data
-
-	mov	$0x0f,%ah
-	int	$0x10
-	mov	%ax,6		// al = video mode, ah = window width
+	mov	%ah,7		// ah = video columns
 
 	call	getcpu		// implemented in cputype.S
 
@@ -1293,6 +1263,52 @@ putc:	push %bx
 	ret
 
 #endif /* CONFIG_ARCH_8018X*/
+
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+// Architecture specific routines for NECV25
+// Based on Santiago Hormazabal CONFIG_ARCH_8018X
+//	Entry points specific for platform setup of SETUP_xxx variables (see config.h)
+//		arch_set_initseg
+//		arch_get_mem
+
+#ifdef CONFIG_ARCH_NECV25
+#include "cputype.S"
+#include <arch/necv25.h>
+
+// Return total memory in Kbytes
+arch_get_mem:
+   mov   $SETUP_MEM_KBYTES,%ax
+   ret
+
+// Set INITSEG values for NEC V25 architecture
+// currently hard-coded in config.h
+arch_set_initseg:
+   call  getcpu                     // implemented in cputype.S
+
+   mov   $INITSEG,%ax
+   mov   %ax,%ds
+   ret
+
+// Write AL to console, save all other registers
+putc:	
+   push  %bx
+   push  %ds
+	 
+   movw  $NEC_HW_SEGMENT, %bx       // load DS to access memmory mapped CPU registers
+   movw  %bx, %ds
+
+1:                                  // wait for Tx ready
+   testb $0x80, %ds:NEC_STIC1
+   jz	   1b
+
+   movb  $0x47, %ds:NEC_STIC1       // clear Tx ready flag
+   movb  %al, %ds:NEC_TXB1          // send char
+	
+   pop   %ds
+   pop   %bx
+   ret
+
+#endif /* CONFIG_ARCH_NECV25 */
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 // Architecture specific routines for Solo/86

@@ -4,40 +4,22 @@ include $(BASEDIR)/Makefile-rules
 
 ###############################################################################
 
-LOCALCFLAGS = -Dlint -DELKS=1 -D__huge=
+LOCALFLAGS = -Dlint -DELKS=1 -D__huge=
 # remove next line when FAT32 supported
-LOCALCFLAGS += -Wno-shift-count-overflow
+LOCALFLAGS += -Wno-shift-count-overflow
 
 ###############################################################################
 
 PRGS = fsck-dos
+OBJS = main.o boot.o check.o dir.o fat.o
 
 all: $(PRGS)
 
+$(PRGS): $(OBJS)
+	$(LD) -o $@ $(LDFLAGS) -maout-heap=0xffff $^ $(LDLIBS)
+
 install: all
 	$(INSTALL) $(PRGS) $(DESTDIR)/bin
-
-main.o: main.c
-	$(CC) $(LOCALCFLAGS) $(CFLAGS) -c -o $*.o $<
-
-boot.o: boot.c
-	$(CC) $(LOCALCFLAGS) $(CFLAGS) -c -o $*.o $<
-
-check.o: check.c
-	$(CC) $(LOCALCFLAGS) $(CFLAGS) -c -o $*.o $<
-
-dir.o: dir.c
-	$(CC) $(LOCALCFLAGS) $(CFLAGS) -c -o $*.o $<
-
-fat.o: fat.c
-	$(CC) $(LOCALCFLAGS) $(CFLAGS) -c -o $*.o $<
-
-fsck-dos: main.o boot.o check.o dir.o fat.o
-	$(LD) $(LDFLAGS) -maout-heap=0xffff -o $@ $^ $(LDLIBS)
-
-fsck-dos.os2:
-	ewcc -Dlint=1 -DELKS=1 boot.c check.c dir.c fat.c main.c mem.c
-	ewlink -o fsck-dos.os2 boot.obj check.obj dir.obj fat.obj main.obj mem.obj
 
 clean:
 	$(RM) *.o $(PRGS) *.obj *.os2

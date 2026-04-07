@@ -1,5 +1,5 @@
 /*
- * Architecture Specific routines for CGA
+ * Architecture Specific routines for IBM PC BASIC with EGA/VGA graphics support
  * Sep 2024 Takahiro Yamada
  */
 #include <stdio.h>
@@ -8,282 +8,178 @@
 #include "host.h"
 #include "basic.h"
 
-#define VIDEO_05_G320x200   0x0005
-#define VIDEO_03_T80x25     0x0003
+/* supported BIOS video modes */
+#define TEXT_MODE           0x03        /* 80x25 text mode */
+#define CGA_320x200x4       0x04        /* 320x200 4 color/2bpp */
+#define EGA_640x350x16      0x10        /* 640x350 16 color/4bpp */
+#define VGA_640x480x16      0x12        /* 640x480 16 color/4bpp */
 
-static int gmode = 0;
-static int exit_on = 0;
+/* MODE n values */
+#define TEXT    0
+#define DEFAULT 1
+#define VGA     2
+#define EGA     3
+#define CGA     4
 
-typedef struct {
+/* graphics context */
+struct gc {
     int x;
     int y;
-    int fgc;
-    int bgc;
+    int fg;
+    int bg;
     int r;
-} xyc_t;
+};
 
-static xyc_t gxyc = {0, 0, 7, 0, 1};
+static int gmode;
+static int MAX_Y;
+static char exit_on = 0;
+static struct gc gc = {0, 0, 7, 0, 1};
 
-extern void fmemsetw(void * off, unsigned int seg, unsigned int val, size_t count);
+/* external procedures */
+void fmemsetw(void * off, unsigned int seg, unsigned int val, size_t count);
+void int_10(unsigned int ax, unsigned int bx, unsigned int cx, unsigned int dx);
 
-extern void int_10(unsigned int ax, unsigned int bx,
-                   unsigned int cx, unsigned int dx);
-
-void host_digitalWrite(int pin,int state) {
+void host_digitalWrite(int pin,int state)
+{
 }
 
-int host_digitalRead(int pin) {
+int host_digitalRead(int pin)
+{
     return 0;
 }
 
-int host_analogRead(int pin) {
+int host_analogRead(int pin)
+{
     return 0;
 }
 
-void host_pinMode(int pin,int mode) {
+void host_pinMode(int pin,int mode)
+{
 }
 
-static void mode_reset() {
+static void mode_reset(void)
+{
     if (gmode)
-        int_10(VIDEO_03_T80x25, 0, 0, 0);
+        int_10(TEXT_MODE, 0, 0, 0);
 }
 
-void host_mode(int mode) {
-    gmode = mode;
-
-    if (gmode && !exit_on) {
+void host_mode(int mode)
+{
+    if (mode && !exit_on) {
         atexit(mode_reset);
         exit_on = 1;
     }
 
-    if (gmode)
-        int_10(VIDEO_05_G320x200, 0, 0, 0);
-    else
-        int_10(VIDEO_03_T80x25, 0, 0, 0);
+    if (mode == DEFAULT)
+        mode = getenv("EGAMODE")? EGA: VGA;
+    switch (mode) {
+    case TEXT:
+        gmode = TEXT_MODE;
+        break;
+    case VGA:
+        gmode = VGA_640x480x16;
+        MAX_Y = 480 - 1;
+        break;
+    case EGA:
+        gmode = EGA_640x350x16;
+        MAX_Y = 350 - 1;
+        break;
+    case CGA:
+        gmode = CGA_320x200x4;
+        MAX_Y = 200 - 1;
+        break;
+    default:
+        gmode = mode;       /* MODE > 3 uses actual mode passed */
+        MAX_Y = 0;          /* but (0,0) will be upper left */
+        break;
+    }
+    int_10(gmode, 0, 0, 0);
 }
 
-void host_cls() {
-
-    if (gmode) {
-        fmemsetw(0, 0xB800, 0, 4000);
-        fmemsetw(0, 0xBA00, 0, 4000);
-    }
-    else
+void host_cls(void)
+{
+    switch (gmode) {
+    case 0:
         fprintf(outfile, "\033[H\033[2J");
-}
-
-void host_color(int fgc, int bgc) {
-
-    if (gmode) {
-        gxyc.fgc = fgc;
-        gxyc.bgc = bgc;
+        break;
+    case VGA_640x480x16:                /* 640x480/8 = 38,400 bytes */
+        fmemsetw(0, 0xA000, 0, 19200);
+        break;
+    case EGA_640x350x16:                /* 640x350/8 = 28,000 bytes */
+        fmemsetw(0, 0xA000, 0, 14000);
+        break;
+    case CGA_320x200x4:                 /* 320x200x4 = 16,000 RAM, two banks of 8000 */
+        fmemsetw(0, 0xB800, 0, 4000);   /* CGA bank 0 */
+        fmemsetw(0, 0xBA00, 0, 4000);   /* CGA bank 1 */
+        break;
+    default:
+        break;
     }
 }
 
-void host_plot(int x, int y) {
-
+void host_color(int fg, int bg)
+{
     if (gmode) {
-        y = 199 - y;
-
-        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, x, y);
-
-        gxyc.x = x;
-        gxyc.y = y;
+        gc.fg = fg;
+        gc.bg = bg;
     }
 }
 
-void host_draw(int x, int y) {
+static void draw_point(int x, int y)
+{
+    int_10((0x0C00 | (0xFF & gc.fg)), 0, x, y);
+}
 
-    int nx;
-    int ny;
-    unsigned int fdiff;
-    unsigned int xdiff;
-    unsigned int ydiff;
-    unsigned int nxdiff;
-    unsigned int nydiff;
-    int ni;
+static void draw_line(int x1, int y1, int x2, int y2)
+{
+    /* Bresenham's line algorithm for efficient line drawing */
+    int dx = abs(x2 - x1);
+    int dy = abs(y2 - y1);
+    int sx = (x1 < x2) ? 1 : -1;
+    int sy = (y1 < y2) ? 1 : -1;
+    int err = dx - dy;
 
-    nx = gxyc.x;
-    ny = gxyc.y;
+    while (x1 != x2 || y1 != y2) {
+        draw_point(x1, y1);
 
+        int e2 = err << 1;
+        if (e2 > -dy) {
+            err -= dy;
+            x1 += sx;
+        }
+        if (e2 < dx) {
+            err += dx;
+            y1 += sy;
+        }
+    }
+    draw_point(x2, y2);
+}
+
+void host_plot(int x, int y)
+{
     if (gmode) {
-        y = 199 - y;
+        if (MAX_Y) y = MAX_Y - y;
 
-        xdiff = 0;
-        ydiff = 0;
-        nxdiff = 0;
-        nydiff = 0;
+        draw_point(x, y);
 
-        if ((nx < x) && (ny < y)) {
-            if ((y - ny) > (x - nx)) {
-                fdiff = (y - ny) << 7;                         // binary fraction 7bits
-                ydiff = (unsigned int) (fdiff / (x - nx));    // maximum slope is 511.992...
-            }
-            else {
-                fdiff = (x - nx) << 7;
-                xdiff = (unsigned int) (fdiff / (y - ny));
-            }
-        }
-        else if ((nx > x) && (ny < y)) {
-            if ((y - ny) > (nx - x)) {
-                fdiff = (y - ny) << 7;
-                ydiff = (unsigned int) (fdiff / (nx - x));
-            }
-            else {
-                fdiff = (nx - x) << 7;
-                xdiff = (unsigned int) (fdiff /(y - ny));
-            }
-        }
-        else if ((nx < x) && (ny > y)) {
-            if ((ny - y) > (x - nx)) {
-                fdiff = (ny - y) << 7;
-                ydiff = (unsigned int) (fdiff /(x - nx));
-            }
-            else {
-                fdiff = (x - nx) << 7;
-                xdiff = (unsigned int) (fdiff /(ny - y));
-            }
-        }
-        else if ((nx > x) && (ny > y)) {
-            if ((ny - y) > (nx - x)) {
-                fdiff = (ny - y) << 7;
-                ydiff = (unsigned int) (fdiff /(nx - x));
-            }
-            else {
-                fdiff = (nx - x) << 7;
-                xdiff = (unsigned int) (fdiff /(ny - y));
-            }
-        }
+        gc.x = x;
+        gc.y = y;
+    }
+}
 
-        if (xdiff == 0) {
-            if (nx < x) {
-                while (nx < x) {
-                    nx++;
-                    nydiff += ydiff;
-                    if (ny < y) {
-                        for (ni = 0; ni < (nydiff >> 7); ni++) {
-                            ny++;
-                            int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                        }
-                        nydiff &= 0x007F;
-                    }
-                    else if (ny > y) {
-                        for (ni = 0; ni < (nydiff >> 7); ni++) {
-                            ny--;
-                            int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                        }
-                        nydiff &= 0x007F;
-                    }
-                    else
-                        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                }
-            }
-            else if (nx > x) {
-                while (nx > x) {
-                    nx--;
-                    nydiff += ydiff;
-                    if (ny < y) {
-                        for (ni = 0; ni < (nydiff >> 7); ni++) {
-                            ny++;
-                            int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                        }
-                        nydiff &= 0x007F;
-                    }
-                    else if (ny > y) {
-                        for (ni = 0; ni < (nydiff >> 7); ni++) {
-                            ny--;
-                            int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                        }
-                        nydiff &= 0x007F;
-                    }
-                    else
-                        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                }
-            }
-            else if (nx == x) {
-                if (ny < y) {
-                    while (ny < y) {
-                        ny++;
-                        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                    }
-                }
-                else if (ny > y) {
-                    while (ny > y) {
-                        ny--;
-                        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                    }
-                }
-            }
-        }
-        else {
-            if (ny < y) {
-                while (ny < y) {
-                    ny++;
-                    nxdiff += xdiff;
-                    if (nx < x) {
-                        for (ni = 0; ni < (nxdiff >> 7); ni++) {
-                            nx++;
-                            int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                        }
-                        nxdiff &= 0x007F;
-                    }
-                    else if (nx > x) {
-                        for (ni = 0; ni < (nxdiff >> 7); ni++) {
-                            nx--;
-                            int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                        }
-                        nxdiff &= 0x007F;
-                    }
-                    else
-                        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                }
-            }
-            else if (ny > y) {
-                while (ny > y) {
-                    ny--;
-                    nxdiff += xdiff;
-                    if (nx < x) {
-                        for (ni = 0; ni < (nxdiff >> 7); ni++) {
-                            nx++;
-                            int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                        }
-                        nxdiff &= 0x007F;
-                    }
-                    else if (nx > x) {
-                        for (ni = 0; ni < (nxdiff >> 7); ni++) {
-                            nx--;
-                            int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                        }
-                        nxdiff &= 0x007F;
-                    }
-                    else
-                        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                }
-            }
-            else if (ny == y) {
-                if (nx < x) {
-                    while (nx < x) {
-                        nx++;
-                        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                    }
-                }
-                else if (nx > x) {
-                    while (nx > x) {
-                        nx--;
-                        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, nx, ny);
-                    }
-                }
-            }
-        }
-        int_10((0x0C00 | (0xFF & gxyc.fgc)), 0, x, y);
-
-        gxyc.x = x;
-        gxyc.y = y;
+void host_draw(int x, int y)
+{
+    if (gmode) {
+        if (MAX_Y) y = MAX_Y - y;
+        draw_line(gc.x, gc.y, x, y);
+        gc.x = x;
+        gc.y = y;
     }
 }
 
 //using midpoint circle algorithm
-void host_circle(int xc, int yc, int r) {
+void host_circle(int xc, int yc, int r)
+{
     int x = 0;
     int y = r;
     int d = 1 - r;
@@ -308,18 +204,22 @@ void host_circle(int xc, int yc, int r) {
     }
 }
 
-void host_outb(int port, int value) {
+void host_outb(int port, int value)
+{
     outb(value, port);
 }
 
-void host_outw(int port, int value) {
+void host_outw(int port, int value)
+{
     outw(value, port);
 }
 
-int host_inpb(int port) {
+int host_inpb(int port)
+{
     return inb(port);
 }
 
-int host_inpw(int port) {
+int host_inpw(int port)
+{
     return inw(port);
 }

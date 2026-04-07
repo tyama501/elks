@@ -29,11 +29,15 @@
 #include <linuxmt/heap.h>
 #include <arch/irq.h>
 
+#ifndef CONFIG_DEF_BAUD
+#define CONFIG_DEF_BAUD B9600   /* default baud rate */
+#endif
+
 /* default termios, set at init time, not reset at open*/
 struct termios def_vals = {
     BRKINT|ICRNL,                                       /* c_iflag*/
     OPOST|ONLCR,                                        /* c_oflag*/
-    (tcflag_t) (B9600 | CS8),                           /* c_cflag*/
+    (tcflag_t) (CONFIG_DEF_BAUD | CS8),                 /* c_cflag*/
     (tcflag_t) (ISIG | ICANON | ECHO | ECHOE),          /* c_lflag*/
     0,                                                  /* c_line*/
     { 3,        /* VINTR*/
@@ -67,12 +71,12 @@ int tty_intcheck(register struct tty *ttyp, unsigned char key)
     if ((ttyp->termios.c_lflag & ISIG) && ttyp->pgrp) {
         if (key == ttyp->termios.c_cc[VINTR])
             sig = SIGINT;
-        if (key == ttyp->termios.c_cc[VQUIT])
+        else if (key == ttyp->termios.c_cc[VQUIT])
             sig = SIGQUIT;
-        if (key == ttyp->termios.c_cc[VSUSP])
+        else if (key == ttyp->termios.c_cc[VSUSP])
             sig = SIGTSTP;
 #if DEBUG_EVENT
-        if (key >= ('N' & 0x1f) && key <= ('P' & 0x1f)) {       /* CTRLN-CTRLP */
+        else if (key >= ('N' & 0x1f) && key <= ('P' & 0x1f)) {  /* CTRLN-CTRLP */
             debug_event((key - 'N') & 0x1f);
             return 1;
         }
@@ -144,43 +148,45 @@ void tty_freeq(struct tty *tty)
 
 int tty_open(struct inode *inode, struct file *file)
 {
-    struct tty *otty;
+    struct tty *tty;
     int err;
 
-    if (!(otty = determine_tty(inode->i_rdev)))
+    if (!(tty = determine_tty(inode->i_rdev)))
         return -ENODEV;
 
     debug_tty("TTY open pid %P\n");
-#if UNUSED
-    memcpy(&otty->termios, &def_vals, sizeof(struct termios));
-#endif
 
-    if ((file->f_flags & O_EXCL) && (otty->flags & TTY_OPEN))
+    if ((file->f_flags & O_EXCL) && (tty->flags & TTY_OPEN))
         return -EBUSY;
 
     /* don't call driver on /dev/tty open*/
     if (MINOR(inode->i_rdev) == 255)
         return 0;
 
-    err = otty->ops->open(otty);
+#if UNUSED
+    memcpy(&tty->termios, &def_vals, sizeof(struct termios));
+#endif
+    debug_tty("TTY open pid %P session %d pgrp %d ttygrp %d tty %x\n",
+        current->session, current->pgrp,  tty->pgrp, current->tty);
+    err = tty->ops->open(tty);
     if (!err) {
         if (!(file->f_flags & O_NOCTTY) && current->session == current->pid
-                && current->tty == NULL && otty->pgrp == 0) {
+                && current->tty == NULL && tty->pgrp == 0) {
             debug_tty("TTY setting pgrp %d pid %P\n", current->pgrp);
-            otty->pgrp = current->pgrp;
-            current->tty = otty;
+            tty->pgrp = current->pgrp;
+            current->tty = tty;
         }
-        otty->flags |= TTY_OPEN;
+        tty->flags |= TTY_OPEN;
     }
     return err;
 }
 
 void tty_release(struct inode *inode, struct file *file)
 {
-    register struct tty *rtty;
+    register struct tty *tty;
 
-    rtty = determine_tty(inode->i_rdev);
-    if (!rtty)
+    tty = determine_tty(inode->i_rdev);
+    if (!tty)
         return;
 
     debug_tty("TTY close pid %P\n");
@@ -190,16 +196,16 @@ void tty_release(struct inode *inode, struct file *file)
         return;
 
     /* don't release pgrp for /dev/tty, only real tty*/
-    if (current->pid == rtty->pgrp) {
+    if (current->pid == tty->pgrp) {
         debug_tty("TTY release pgrp %P\n");
-        if (rtty->termios.c_cflag & HUPCL) {
+        if (tty->termios.c_cflag & HUPCL) {
                 debug_tty("TTY sending SIGHUP pid %P\n");
-                kill_pg(rtty->pgrp, SIGHUP, 1);
+                kill_pg(tty->pgrp, SIGHUP, 1);
         }
-        rtty->pgrp = 0;
+        tty->pgrp = 0;
     }
-    rtty->flags &= ~TTY_OPEN;
-    rtty->ops->release(rtty);
+    tty->flags &= ~TTY_OPEN;
+    tty->ops->release(tty);
 }
 
 /*
@@ -283,30 +289,28 @@ static void tty_echo(register struct tty *tty, unsigned char ch)
 size_t tty_write(struct inode *inode, struct file *file, char *data, size_t len)
 {
     register struct tty *tty = determine_tty(inode->i_rdev);
-    size_t i;
-    int s;
+    size_t count = 0;
+    int ret;
 
-    i = 0;
-    while (i < len) {
-        s = chq_wait_wr(&tty->outq, (file->f_flags & O_NONBLOCK) | i);
-        if (s < 0) {
-            /* FIXME EAGAIN not returned, cycle required on telnet nonblocking terminal */
-            if (s == -EINTR || s == -EAGAIN) {
+    while (count < len) {
+        ret = chq_wait_wr(&tty->outq, (file->f_flags & O_NONBLOCK) | count);
+        if (ret < 0) {
+            if (count != 0 && ret == -EAGAIN) {
                 tty->ops->write(tty);
                 wake_up(&tty->outq.wait);
                 schedule();
                 continue;
             }
-            if (i == 0)
-                i = s;
+            if (count == 0)
+                count = ret;
             break;
         }
         chq_addch_nowakeup(&tty->outq, get_user_char(data++));
-        i++;
+        count++;
     }
     tty->ops->write(tty);
     wake_up(&tty->outq.wait);
-    return i;
+    return count;
 }
 
 size_t tty_read(struct inode *inode, struct file *file, char *data, size_t len)
@@ -321,14 +325,14 @@ size_t tty_read(struct inode *inode, struct file *file, char *data, size_t len)
     int ch, k;
 
     while (i < len) {
-        timeout = jiffies + vtime * (HZ / 10);
+        timeout = jiffies() + vtime * (HZ / 10);
 again:
         if (tty->ops->read) {
             tty->ops->read(tty);
             nonblock = 1;
         }
 
-        if (chq_peekch(&tty->inq))
+        if (chq_peek(&tty->inq))
             ch = chq_getch(&tty->inq);
         else {
             if (!icanon && !vtime && (i >= vmin))
@@ -338,7 +342,7 @@ again:
                 if (current->signal)
                     return -EINTR;
                 if (!icanon && vtime) {
-                    if (jiffies < timeout) {
+                    if (jiffies() < timeout) {
                         schedule();
                         goto again;             /* don't reset timer*/
                     } else {
@@ -356,7 +360,7 @@ again:
             ch = chq_getch(&tty->inq);
         }
 
-        if ((tty->termios.c_iflag & ICRNL) && (ch == '\r'))
+        if ((ch == '\r') && (tty->termios.c_iflag & ICRNL))
             ch = '\n';
 
         if (icanon) {
@@ -465,6 +469,8 @@ extern struct tty_ops headlesscon_ops;  /* CONFIG_CONSOLE_HEADLESS*/
 extern struct tty_ops rs_ops;           /* CONFIG_CHAR_DEV_RS*/
 extern struct tty_ops ttyp_ops;         /* CONFIG_PSEUDO_TTY*/
 extern struct tty_ops i8018xcon_ops;    /* CONFIG_CONSOLE_8018X*/
+extern struct tty_ops necv25con_ops;    /* CONFIG_CONSOLE_NECV25*/
+extern struct tty_ops ps2_mouse_ops;    /* CONFIG_MOUSE_PS2*/
 
 void INITPROC tty_init(void)
 {
@@ -485,6 +491,8 @@ void INITPROC tty_init(void)
         ttyp->ops = &bioscon_ops;
 #elif defined(CONFIG_CONSOLE_8018X)
         ttyp->ops = &i8018xcon_ops;
+#elif defined(CONFIG_CONSOLE_NECV25)
+        ttyp->ops = &necv25con_ops;
 #else
         ttyp->ops = &headlesscon_ops;
 #endif
@@ -506,6 +514,11 @@ void INITPROC tty_init(void)
         ttyp->ops = &ttyp_ops;
         (ttyp++)->minor = i;            /* ttyp0 = PTY slave PTY_MINOR_OFFSET */
     }
+#endif
+
+#ifdef CONFIG_MOUSE_PS2
+        ttyp->ops = &ps2_mouse_ops;
+        (ttyp++)->minor = MOUSE_MINOR_OFFSET;   /* psaux = PS/2 mouse */
 #endif
 
     register_chrdev(TTY_MAJOR, "tty", &tty_fops);

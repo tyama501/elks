@@ -14,7 +14,7 @@ cleanup()
     rm -f elkscmd/sys_utils/meminfo.o
     rm -f elkscmd/sys_utils/beep.o
     rm -f elkscmd/basic/*.o
-    rm -f elkscmd/nano-X/*/*.o
+    rm -f elkscmd/romprg/*.o
 }
 
 # build PC-98 versions
@@ -22,6 +22,8 @@ build_pc98()
 {
     cleanup
     cp pc98-1232.config .config
+    make
+    ./buildext.sh microwindows_pc98
     make
     mv image/fd1232.img image/fd1232-pc98.img
 }
@@ -31,7 +33,17 @@ build_pc98_fast()
     cleanup
     cp pc98-1232-nc.config .config
     make
+    ./buildext.sh microwindows_pc98
+    make
     mv image/fd1232.img image/fd1232-pc98.img
+}
+
+build_pc98_1200()
+{
+    cleanup
+    cp pc98-1200.config .config
+    make
+    mv image/fd1200.img image/fd1200-pc98.img
 }
 
 build_pc98_1440()
@@ -52,6 +64,16 @@ build_rom_8018x()
     mv image/romfs.bin image/romfs-8018x.bin
 }
 
+# build NEC V25 rom image
+build_rom_necv25()
+{
+    cleanup
+    cp necv25.config .config
+    make
+    cp -p elks/arch/i86/boot/Image image/rom-necv25.bin
+    mv image/romfs.bin image/romfs-necv25.bin
+}
+
 # build 8088 rom image
 build_rom_8088()
 {
@@ -69,6 +91,7 @@ build_rom_swan()
     cp swan.config .config
     make
     mv image/rom.wsc image/rom-swan.wsc
+    rm -f image/romfs.bin
 }
 
 # build IBM PC versions
@@ -83,6 +106,8 @@ build_ibm_fast()
 {
     cleanup
     cp ibmpc-1440-nc.config .config
+    make
+    ./buildext.sh all
     make
 }
 
@@ -108,8 +133,13 @@ fi
 
 # full (re)build including C library and all applications
 make clean
+build_ibm_fast
 build_pc98
+build_pc98_1200
+build_pc98_1440
+./buildext.sh microwindows
 build_rom_8018x
+build_rom_necv25
 build_rom_8088
 build_rom_swan
 build_ibm

@@ -9,6 +9,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -24,7 +25,7 @@
 #include "timer.h"
 #include "netconf.h"
 
-timeq_t Now;
+#define FP_SEG(fp) ((unsigned)((unsigned long)(void __far *)(fp) >> 16))
 
 #if DEBUG_TCPPKT
 static char *tcp_flags(int flags)
@@ -46,7 +47,7 @@ static char *tcp_flags(int flags)
 void tcp_print(struct iptcp_s *head, int recv, struct tcpcb_s *cb)
 {
 #if DEBUG_TCPPKT
-    debug_tcppkt("tcp: %s ", recv? "recv": "send");
+    debug_tcppkt("[%lu]tcp: %s ", get_time(), recv? "recv": "send");
     debug_tcppkt("%u->%u ", ntohs(head->tcph->sport), ntohs(head->tcph->dport));
     debug_tcppkt("[%s] ", tcp_flags(head->tcph->flags));
     if (cb) {
@@ -68,8 +69,8 @@ void tcp_print(struct iptcp_s *head, int recv, struct tcpcb_s *cb)
 #if DEBUG_TCPDATA
     int datalen = head->tcplen - TCP_DATAOFF(head->tcph);
     unsigned char *data = (__u8 *)head->tcph + TCP_DATAOFF(head->tcph);
-    if (datalen)
-	hexdump(data, datalen, 0, recv? "<- ": "-> ");
+    if (datalen && dprintf_on)
+	hexdump(data, FP_SEG(data), datalen, 0, recv? "<- ": "-> ");
 #endif
 }
 
@@ -84,7 +85,7 @@ int tcp_init(void)
 
 static __u32 choose_seq(void)
 {
-    return timer_get_time();
+    return get_time();
 }
 
 void tcp_send_reset(struct tcpcb_s *cb)
@@ -180,6 +181,8 @@ static void tcp_listen(struct iptcp_s *iptcp, struct tcpcb_s *lcb)
 
     if (!(h->flags & TF_SYN)) {
 	debug_tcp("tcp: no SYN in listen\n");
+	tcp_reject(iptcp->iph);	/* courtesy, not required, reduce noise on the network */
+				/* caused by lingering connections after hangs/reboots */
 	return;
     }
 
@@ -220,9 +223,9 @@ static void tcp_listen(struct iptcp_s *iptcp, struct tcpcb_s *lcb)
 
 /*
  * This function is called from other states also to do the standard
- * processing. The only thing to matter is that the state that calls it,
- * must process and remove the FIN flag. The only flag that causes a
- * state change here in this function
+ * processing. The only thing to note is that the state that calls it,
+ * must process and remove the FIN flag, the only flag that causes a
+ * state change in this function.
  */
 
 static void tcp_established(struct iptcp_s *iptcp, struct tcpcb_s *cb)
@@ -238,12 +241,14 @@ static void tcp_established(struct iptcp_s *iptcp, struct tcpcb_s *cb)
 
     if (h->flags & TF_RST) {
 	/* TODO: Check seqnum for security */
+#if VERBOSE
 	printf("tcp: RST from %s:%u->%u\n",
 	    in_ntoa(cb->remaddr), ntohs(h->sport), ntohs(h->dport));
+#endif
 	rmv_all_retrans_cb(cb);
 
 	if (cb->state == TS_CLOSE_WAIT) {
-	    cbs_in_user_timeout--;
+	    //cbs_in_user_timeout--;	/* CLOSE_WAIT does not timeout */
 	    ENTER_TIME_WAIT(cb);
 	    notify_sock(cb->sock, TDT_CHG_STATE, SS_DISCONNECTING);
 	} else {
@@ -253,8 +258,10 @@ static void tcp_established(struct iptcp_s *iptcp, struct tcpcb_s *cb)
 	return;
     }
 
+    /* this actually happens some times, on slow systems ... */
     if (cb->unaccepted && (h->flags & TF_FIN)) {
 	debug_tcp("tcp: FIN received before accept, dropping packet\n");
+	printf("tcp: activity before accept, dropping packet\n");
 	netstats.tcpdropcnt++;
 
 	/* We can't change state before accept processing, so drop packet*/
@@ -263,7 +270,8 @@ static void tcp_established(struct iptcp_s *iptcp, struct tcpcb_s *cb)
 
     datasize = iptcp->tcplen - TCP_DATAOFF(h);
     if (datasize != 0) {
-	debug_window("tcp: recv data len %u avail %u\n", datasize, CB_BUF_SPACE(cb));
+	debug_window("[%lu]tcp: recv data len %u avail %u\n",
+            get_time(), datasize, CB_BUF_SPACE(cb));
 	/* Process the data */
 	data = (__u8 *)h + TCP_DATAOFF(h);
 
@@ -287,8 +295,28 @@ static void tcp_established(struct iptcp_s *iptcp, struct tcpcb_s *cb)
 
     if (h->flags & TF_ACK) {		/* update unacked*/
 	acknum = ntohl(h->acknum);
-	if (SEQ_LT(cb->send_una, acknum))
+	if (SEQ_LT(cb->send_una, acknum)) {
+	    debug_cwnd("tcp:     ACK seq %lu unack %lu\n", acknum, cb->send_una);
 	    cb->send_una = acknum;
+	    /* adjust congestion window */
+	    if (cb->cwnd <= cb->ssthresh && !cb->retrans_act)
+		cb->cwnd++;
+	    if (cb->inflight == 1 || cb->send_una == cb->send_nxt) {
+		cb->inflight = 0;	/* all outstanding packets ACKed */
+		debug_cwnd("tcp: all ACK seq %lu inflt %d\n", acknum, cb->inflight);
+	    } else {
+		/* We're more than 1 packet ahead of the recipient - which is normal.
+		 * The inflight counter may occasionally get slightly
+		 * out of sync but will be autocorrected eventually. */
+		cb->inflight--;
+	    }
+	} else {
+	    debug_cwnd("tcp: DUP ACK seq %lu unack %lu\n", acknum, cb->send_una);
+	    /* Keep in mind that a DUP ACK rarely means a lost packet nowadays, but
+	     * rather a delay that will rectify itself if we don't mess with it.
+	     * TODO: We may still want to adjust the slowStart/CongestionAvoidance
+	     * parameter when this happens even if it's rare */
+	}
     }
 
     if (h->flags & TF_FIN) {
@@ -296,8 +324,18 @@ static void tcp_established(struct iptcp_s *iptcp, struct tcpcb_s *cb)
 	debug_close("tcp[%p] packet in established, fin: 1, data: %d, setting state to CLOSE_WAIT\n", cb->sock, datasize);
 
 	cb->state = TS_CLOSE_WAIT;
-	cb->time_wait_exp = Now;	/* used for debug output only*/
+	cb->time_wait_exp = Now;	/* used for debug output only */
+	/* NOTE:
+	   There is no timeout on CLOSE_WAIT. It will wait forever - until the client
+	   decides to close the connection. If there is unread data, ktcp will loop
+	   trying to push that data to the client. This is a feature, not a bug.
+	   It will happen in cases like an idle ftp client: The server will timeout
+	   and close the connection. The client side will enter CLOSE_WAIT and wait
+	   until user decides to come back and close the connection.
+	 */
+
 	debug_tcp("tcp: got FIN with data %d buffer %d\n", datasize, cb->buf_used);
+
 	if (cb->bytes_to_push <= 0)
 	    notify_sock(cb->sock, TDT_CHG_STATE, SS_DISCONNECTING);
     }
@@ -306,7 +344,8 @@ static void tcp_established(struct iptcp_s *iptcp, struct tcpcb_s *cb)
 	return; /* ACK with no data received - so don't answer*/
 
     cb->rcv_nxt += datasize;
-    debug_window("tcp: ACK seq %ld len %d\n", cb->rcv_nxt - cb->irs, datasize);
+    debug_window("[%lu]tcp: ACK seq %ld len %d\n",
+        get_time(), cb->rcv_nxt - cb->irs, datasize);
     tcp_send_ack(cb);
 }
 
@@ -342,7 +381,7 @@ static void tcp_fin_wait_1(struct iptcp_s *iptcp, struct tcpcb_s *cb)
 	iptcp->tcph->flags &= ~TF_FIN;
 	debug_close("tcp[%p] setting state to CLOSING\n", cb->sock);
 
-	cb->state = TS_CLOSING; 	/* cbs_in_user_timeout stays unchanged */
+	cb->state = TS_CLOSING; 	/* cbs_in_user_timeout stays unchanged (set) */
 	cb->time_wait_exp = Now;
 	needack = 1;
     }
@@ -381,7 +420,7 @@ static void tcp_fin_wait_2(struct iptcp_s *iptcp, struct tcpcb_s *cb)
 
     cb->time_wait_exp = Now;
     if (iptcp->tcph->flags & TF_FIN) {
-	cb->rcv_nxt ++;
+	cb->rcv_nxt++;
 
 	/* Remove the flag */
 	iptcp->tcph->flags &= ~TF_FIN;
@@ -445,6 +484,41 @@ static void tcp_last_ack(struct iptcp_s *iptcp, struct tcpcb_s *cb)
     }
 }
 
+/* Prepare and send RST for non-existing connections
+ * (typically lingering connections  after a reboot) */
+void tcp_reject(struct iphdr_s *iph) {
+	struct tcpcb_list_s *cbnode;
+	struct tcphdr_s *tcph;
+	struct tcpcb_s *cb = NULL;
+	__u32 seqno;
+
+	tcph = (struct tcphdr_s *)(((char *)iph) + 4 * IP_HLEN(iph));
+	seqno = ntohl(tcph->seqnum);
+	debug_tcp("tcp: refusing packet from %s:%u to :%u fl 0x%02x\n",
+	    in_ntoa(iph->saddr), ntohs(tcph->sport), ntohs(tcph->dport), tcph->flags);
+
+	/* Dummy up a new control block and send RST to shutdown sender */
+	cbnode = tcpcb_new(1);		/* bufsize = 1, dummy */
+	if (cbnode) {
+	    cb = &cbnode->tcpcb;
+	    cb->state = TS_CLOSED;
+	    cb->localaddr = iph->daddr;
+	    cb->localport = ntohs(tcph->dport);
+	    cb->remaddr = iph->saddr;
+	    cb->remport = ntohs(tcph->sport);
+	    if (tcph->flags & TF_ACK) {
+		cb->flags = TF_RST;
+		cb->send_nxt = ntohl(tcph->acknum);
+	    } else
+		cb->flags = TF_RST|TF_ACK;
+	    cb->rcv_nxt = (tcph->flags & TF_SYN)? seqno+1: seqno;
+	    cb->datalen = 0;
+	    tcp_output(cb);		/* send RST*/
+	    tcpcb_remove(cbnode);	/* deallocate*/
+	}
+	return;
+}
+
 /* process an incoming TCP packet*/
 void tcp_process(struct iphdr_s *iph)
 {
@@ -469,30 +543,8 @@ void tcp_process(struct iphdr_s *iph)
     }
 
     if (!cbnode) {
-	printf("tcp: refusing packet from %s:%u to :%u\n", in_ntoa(iph->saddr),
-		ntohs(tcph->sport), ntohs(tcph->dport));
-
-	if (tcph->flags & TF_RST)
-		return;
-
-	/* Dummy up a new control block and send RST to shutdown sender */
-	cbnode = tcpcb_new(1);
-	if (cbnode) {
-	    __u32 seqno = ntohl(tcph->seqnum);
-	    cbnode->tcpcb.state = TS_CLOSED;
-	    cbnode->tcpcb.localaddr = iph->daddr;
-	    cbnode->tcpcb.localport = ntohs(tcph->dport);
-	    cbnode->tcpcb.remaddr = iph->saddr;
-	    cbnode->tcpcb.remport = ntohs(tcph->sport);
-	    if (tcph->flags & TF_ACK) {
-		cbnode->tcpcb.flags = TF_RST;
-		cbnode->tcpcb.send_nxt = ntohl(tcph->acknum);
-	    } else
-		cbnode->tcpcb.flags = TF_RST|TF_ACK;
-	    cbnode->tcpcb.rcv_nxt = (tcph->flags & TF_SYN)? seqno+1: seqno;
-	    tcp_output(&cbnode->tcpcb);		/* send RST*/
-	    tcpcb_remove_cb(&cbnode->tcpcb);	/* deallocate*/
-	}
+	if (!(tcph->flags & TF_RST))
+		tcp_reject(iph);
 
 	netstats.tcpdropcnt++;
 	return;
@@ -502,10 +554,10 @@ void tcp_process(struct iphdr_s *iph)
     if (cb->state != TS_LISTEN && cb->state != TS_SYN_SENT
 			       && cb->state != TS_SYN_RECEIVED) {
 	if (cb->rcv_nxt != ntohl(tcph->seqnum)) {
-	    int datalen = iptcp.tcplen - TCP_DATAOFF(iptcp.tcph);
 
 	    debug_tune("tcp: dropping packet, bad seqno: need %ld got %ld size %d\n",
-		cb->rcv_nxt - cb->irs, ntohl(tcph->seqnum) - cb->irs, datalen);
+		cb->rcv_nxt - cb->irs, ntohl(tcph->seqnum) - cb->irs,
+		iptcp.tcplen - TCP_DATAOFF(iptcp.tcph));
 	    netstats.tcpdropcnt++;
 
 	    if (cb->rcv_nxt != ntohl(tcph->seqnum) + 1)
@@ -515,7 +567,7 @@ void tcp_process(struct iphdr_s *iph)
 	}
 
 	/*
-	 * TODO queue up datagramms not in
+	 * TODO: Queue up datagrams not in
 	 * order and process them in order
 	 */
     }

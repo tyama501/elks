@@ -41,11 +41,6 @@ ifeq ($(CONFIG_ETH), y)
     OBJS += eth.o
 endif
 
-ifeq ($(CONFIG_ARCH_8018X), y)
-	CONIO = 8018x
-	SERIAL = template
-endif
-
 ifeq ($(CONFIG_ARCH_IBMPC), y)
 	CONIO = bios
 	SERIAL = 8250
@@ -55,6 +50,16 @@ ifeq ($(CONFIG_ARCH_PC98), y)
 	SERIAL = pc98
 endif
 
+ifeq ($(CONFIG_ARCH_8018X), y)
+	CONIO = 8018x
+	SERIAL = template
+endif
+
+ifeq ($(CONFIG_ARCH_NECV25), y)
+	CONIO = necv25
+	SERIAL = template
+endif
+
 ifeq ($(CONFIG_ARCH_SWAN), y)
 	CONIO = swan
 	SERIAL = swan
@@ -62,25 +67,7 @@ endif
 
 ifeq ($(CONFIG_ARCH_SOLO86), y)
 	CONIO = solo86
-endif
-
-ifdef CONFIG_ARCH_PC98
-ifdef CONFIG_CONSOLE_DIRECT
-OBJS += console-direct-pc98.o
-endif
-else
-ifdef CONFIG_ARCH_SWAN
-ifdef CONFIG_CONSOLE_DIRECT
-OBJS += console-direct-swan.o console-font-4x8-swan.o console-font-8x8-swan.o
-endif
-else
-ifdef CONFIG_CONSOLE_DIRECT
-OBJS += console-direct.o bell-8254.o
-ifdef CONFIG_CONSOLE_DUAL
-OBJS += crtc-6845.o
-endif
-endif
-endif
+    SERIAL = template
 endif
 
 ifdef CONFIG_CONSOLE_BIOS
@@ -91,38 +78,47 @@ ifdef CONFIG_CONSOLE_8018X
 OBJS += console-serial-8018x.o
 endif
 
-ifdef CONFIG_ARCH_PC98
-ifdef CONFIG_CONSOLE_HEADLESS
-OBJS += console-headless.o
+ifdef CONFIG_CONSOLE_NECV25
+OBJS += console-serial-necv25.o serfast.o
 endif
+
+ifdef CONFIG_ARCH_IBMPC
+  ifdef CONFIG_CONSOLE_DIRECT
+    OBJS += console-direct.o bell-8254.o
+  endif
+  ifdef CONFIG_CONSOLE_DUAL
+    OBJS += crtc-6845.o
+  endif
+endif
+
+ifdef CONFIG_ARCH_PC98
+  ifdef CONFIG_CONSOLE_DIRECT
+    OBJS += console-direct-pc98.o
+  endif
 OBJS += conio-pc98.o conio-pc98-asm.o kbd-poll-pc98.o
 endif
 
 ifdef CONFIG_ARCH_SWAN
-ifdef CONFIG_CONSOLE_HEADLESS
-OBJS += console-headless.o
-endif
-OBJS += kbd-poll.o bell-swan.o conio-swan.o
-endif
-
-ifdef CONFIG_ARCH_IBMPC
-ifdef CONFIG_CONSOLE_HEADLESS
-OBJS += console-headless.o
-endif
-
-ifdef CONFIG_KEYBOARD_SCANCODE
-OBJS += kbd-scancode.o
-else
-OBJS += kbd-poll.o conio-$(CONIO).o
-endif
+  ifdef CONFIG_CONSOLE_DIRECT
+    OBJS += console-direct-swan.o console-font-4x8-swan.o console-font-8x8-swan.o
+  endif
+OBJS += kbd-poll.o conio-$(CONIO).o bell-swan.o
 endif
 
 ifdef CONFIG_ARCH_SOLO86
-ifdef CONFIG_CONSOLE_HEADLESS
-OBJS += console-headless.o
+OBJS += kbd-poll.o conio-$(CONIO).o
 endif
 
-OBJS += kbd-poll.o conio-$(CONIO).o
+ifdef CONFIG_ARCH_IBMPC
+  ifdef CONFIG_KEYBOARD_SCANCODE
+    OBJS += kbd-scancode.o
+  else
+    OBJS += kbd-poll.o conio-$(CONIO).o
+  endif
+endif
+
+ifdef CONFIG_CONSOLE_HEADLESS
+OBJS += console-headless.o
 endif
 
 ifdef CONFIG_CHAR_DEV_RS
@@ -130,6 +126,10 @@ ifdef CONFIG_CHAR_DEV_RS
 	ifdef CONFIG_ARCH_IBMPC
 		OBJS += serfast.o
 	endif
+endif
+
+ifdef CONFIG_ARCH_IBMPC
+  OBJS += mouse-ps2.o
 endif
 
 ifdef CONFIG_CHAR_DEV_CGATEXT
@@ -155,14 +155,6 @@ console-bios.o: console.c
 
 #########################################################################
 # Standard commands.
-
-distdir:
-	mkdir $(DISTDIR)/arch/i86/drivers/char/KeyMaps
-	${MAKE} -C KeyMaps distdir
-	cp -pf CGAsnow Changes NEW_NOTES $(DISTDIR)/arch/i86/drivers/char
-	cp -pf NOTES README_CONSOLE $(DISTDIR)/arch/i86/drivers/char
-	cp -pf Makefile config.in $(DISTDIR)/arch/i86/drivers/char
-	cp -pf *.S *.h *.c $(DISTDIR)/arch/i86/drivers/char
 
 #########################################################################
 ### Dependencies:

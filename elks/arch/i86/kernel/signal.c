@@ -20,13 +20,14 @@
 #include <arch/segment.h>
 #include <arch/irq.h>
 
-int do_signal(void)
+void do_signal(void)
 {
     register __sigdisposition_t *sd;
     register __kern_sighandler_t sah;
     unsigned int signr;
     sigset_t mask;
 
+top:
     signr = 1;
     mask = (sigset_t)1;
     while (current->signal) {
@@ -36,7 +37,7 @@ int do_signal(void)
 	}
 	current->signal ^= mask;
 
-	debug_sig("SIGNAL process signal %d pid %P\n", signr);
+	debug_sig("SIGNAL(%P) do_signal sig %d\n", signr);
 	sah = current->sig.handler;
 	sd = &current->sig.action[signr - 1].sa_dispose;
 	if (*sd == SIGDISP_DFL) {			/* Default */
@@ -44,41 +45,44 @@ int do_signal(void)
 			(SM_SIGCONT | SM_SIGCHLD | SM_SIGWINCH | SM_SIGURG))
 		|| (current->pid == 1 && signr != SIGKILL))
 		continue;
-	    else if (mask &				/* Default Stop */
+	    else
+            if (mask &					/* Default Stop */
 			(SM_SIGSTOP | SM_SIGTSTP | SM_SIGTTIN | SM_SIGTTOU)) {
-		debug_sig("SIGNAL pid %P stopped\n");
+		debug_sig("SIGNAL(%P) stopped sig %d\n", signr);
 		current->state = TASK_STOPPED;
-		/* Let the parent know */
-		current->exit_status = signr;
+		current->exit_status = (signr<<8)|0x7f;	/* Let the parent know */
+		wake_up(&current->p_parent->child_wait);
 		schedule();
+		/* task continues here after SIGCONT */
+		current->signal &= ~(SM_SIGINT|SM_SIGQUIT|SM_SIGSTOP|SM_SIGTSTP);
+		goto top;
 	    }
-	    else {					/* Default Core or Terminate */
+	    else {					/* Default Terminate */
 #if UNUSED
-		if (mask &				/* Default Core */
+		if (mask &
 		      (SM_SIGQUIT|SM_SIGILL|SM_SIGABRT|SM_SIGFPE|SM_SIGSEGV|SM_SIGTRAP))
 		    dump_core();
 #endif
-		debug_sig("SIGNAL terminating pid %P\n");
-		do_exit(signr);				/* Default Terminate */
+		debug_sig("SIGNAL(%P) do_exit sig %d\n", signr);
+		do_exit(signr);
+		/* no return */
 	    }
 	}
 	else if (*sd != SIGDISP_IGN) {			/* Set handler */
-	    debug_sig("SIGNAL setup return stack for handler %x:%x\n",
-		      _FP_SEG(sah), _FP_OFF(sah));
+	    debug_sig("SIGNAL(%P) calling handler %x:%x\n",
+		_FP_SEG(sah), _FP_OFF(sah));
 	    arch_setup_sighandler_stack(current, sah, signr);
 	    *sd = SIGDISP_DFL;
-	    debug_sig("SIGNAL reset pending signals\n");
 	    clr_irq();		/* stop race between reset signal and return to user */
 	    current->signal &= ~mask;
-	    if (current->signal)
-		printk("SIGNAL(%P) processing mask %04x, additional signal w/mask %04x\n",
+	    if (current->signal) {
+		debug_sig("SIGNAL(%P) current mask %04x, next signal mask %04x\n",
 		    mask, current->signal);
-
-	    return 1;
+	    }
+	    return;
 	}
-	else /* else (*sd == SIGDISP_IGN) Ignore */
-	    debug_sig("SIGNAL signal %d ignored pid %P\n", signr);
+	else /* (*sd == SIGDISP_IGN) Ignore */
+	    debug_sig("SIGNAL(%P) sig %d ignored\n", signr);
     }
-    return 0;
 }
 

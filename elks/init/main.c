@@ -15,8 +15,8 @@
 #include <linuxmt/devnum.h>
 #include <linuxmt/heap.h>
 #include <linuxmt/prectimer.h>
+#include <linuxmt/timer.h>
 #include <linuxmt/debug.h>
-#include <arch/system.h>
 #include <arch/segment.h>
 #include <arch/ports.h>
 #include <arch/irq.h>
@@ -54,12 +54,7 @@ static int boot_console;
 static segext_t umbtotal;
 static kdev_t disabled[4];      /* disabled devices using disable= */
 static char bininit[] = "/bin/init";
-static char binshell[] = "/bin/sh";
-#ifdef CONFIG_SYS_NO_BININIT
-static char *init_command = binshell;
-#else
 static char *init_command = bininit;
-#endif
 
 #ifdef CONFIG_BOOTOPTS
 /*
@@ -71,12 +66,8 @@ char errmsg_initargs[] = "init args > " STR(MAX_INIT_ARGS) "\n";
 char errmsg_initenvs[] = "init envs > " STR(MAX_INIT_ENVS) "\n";
 char errmsg_initslen[] = "init words > " STR(MAX_INIT_SLEN) "\n";
 
-#ifdef CONFIG_SYS_NO_BININIT
-static char *argv_init[MAX_INIT_SLEN] = { NULL, binshell, NULL };
-#else
 /* argv_init doubles as sptr data for sys_execv later*/
 static char *argv_init[MAX_INIT_SLEN] = { NULL, bininit, NULL };
-#endif
 static char hasopts;
 static int args = 2;    /* room for argc and av[0] */
 static int envs;
@@ -100,33 +91,100 @@ static void INITPROC finalize_options(void);
 static char * INITPROC option(char *s);
 #endif /* CONFIG_BOOTOPTS */
 
+static void FARPROC far_start_kernel(void);
 static void INITPROC early_kernel_init(void);
 static void INITPROC kernel_init(void);
 static void INITPROC kernel_banner(seg_t init, seg_t extra);
 static void init_task(void);
+static void idle_loop(void);
 
-/* this procedure called using temp stack then switched, no local vars allowed */
+/*
+ * This function is called using the interrupt stack as a temporary stack.
+ * The stack is then switched to an unused task struct's kernel stack area while
+ * performing the majority of kernel initialization. After that, the stack is
+ * switched again to the tiny idle task struct stack area and then becomes the
+ * idle task. Must be compiled using -fno-defer-pop, as otherwise stack pointer
+ * cleanup is delayed after function calls, which interferes with SP resets.
+ * No return is allowed since SP is switched, and the memory used by far_start_kernel
+ * is released after kernel initialization is complete.
+ */
 void start_kernel(void)
 {
+    //tracing = TRACE_KSTACK | TRACE_ISTACK;
+    far_start_kernel();             /* start executing in reusable memory */
+}
+
+static void FARPROC far_start_kernel(void)
+{
+    flag_t flags;                   /* get CPU flag word */
+    save_flags(flags);
+    clr_irq();                      /* we're running on the kernel interrupt stack! */
+    printk("INT %x ", flags);       /* to show interrupt status after setup.S */
     printk("START\n");
-    early_kernel_init();        /* read bootopts using kernel temp stack */
-    task = heap_alloc(max_tasks * sizeof(struct task_struct),
-        HEAP_TAG_TASK|HEAP_TAG_CLEAR);
-    if (!task) panic("No task mem");
 
-    sched_init();               /* set us (the current stack) to be idle task #0*/
-    setsp(&task->t_regs.ax);    /* change to idle task stack */
-    kernel_init();              /* continue init running on idle task stack */
+    early_kernel_init();            /* read bootopts using kernel interrupt stack */
 
-    /* fork and setup procedure init_task() to run as task #1 on reschedule */
+     /*
+      * Allocate the task array + smaller task struct for the idle task.
+      * The idle task struct has a smaller stack in t_kstack[] and no t_regs.
+      * This works because the idle task always runs at intr_count 1, so
+      * interrupts will always save registers onto istack, and never
+      * to the t_regs struct at the end of a normal task struct.
+      */
+     task = heap_alloc(max_tasks * sizeof(struct task_struct) +
+         TASK_KSTACK + IDLESTACK_BYTES, HEAP_TAG_TASK|HEAP_TAG_CLEAR);
+     if (!task) panic("No task mem");
+     idle_task = (struct task_struct *)
+         ((char *)task + max_tasks * sizeof(struct task_struct));
+    setsp(&(task+1)->t_regs.ax);    /* change to a large temp stack (unused task #1) */
+    debug("SP SWITCH\n");
+
+    debug("endbss %x task %x idle_task %x idle_stack %x\n",
+        _endbss, task, idle_task, &idle_task->t_kstack[IDLESTACK_BYTES/2]);
+
+    sched_init();                   /* init the idle and other task structs */
+    kernel_init();                  /* continue kernel init running on large stack */
+
+    /* allocate task struct #0/pid 1 and setup init_task() to run on next reschedule */
     kfork_proc(init_task);
-    wake_up_process(&task[1]);
+    wake_up_process(&task[0]);
+
+    idle_loop();                    /* no return */
+}
+
+/* the idle task loop, no return */
+static void idle_loop(void)
+{
+    /*
+     * Set SP to the small stack in the special idle task struct.
+     * We then become the idle task and are only switched to when the last runnable
+     * user mode process sleeps from its kernel stack and schedule() is called.
+     * As a result, the idle task always runs with intr_count 1, which guarantees
+     * interrupt register saves will be on the interrupt stack, not the idle stack.
+     *
+     * NOTE: Any calls to printk after the small idle stack is set below can cause idle
+     * stack overflow. The good news is that the overflow shouldn't cause much harm
+     * since it overflows into relatively unused areas of the idle task's task_struct.
+     */
+    setsp(&idle_task->t_kstack[IDLESTACK_BYTES/2]);
+    debug("IDLE LOOP %x\n", getsp());
+    //hexdump(idle_task->t_kstack, kernel_ds, IDLESTACK_BYTES, 0, NULL);
+
+    init_bh(TIMER_BH, timer_bh);    /* finally enable timer bottom halves */
 
     /*
-     * We are now the idle task. We won't run unless no other process can run.
-     * The idle task always runs with _gint_count == 1 (switched from user mode syscall)
+     * In the call to schedule below, the init_task function will run, which
+     * completes kernel initialization by mounting the root filesystem, then
+     * loads an executable and executes ret_from_syscall, and the system returns
+     * from the kernel and enters user mode until the next clock tick or system call.
      */
     while (1) {
+#if defined(CHECK_KSTACK) || 1
+        if (idle_task->kstack_magic != KSTACK_MAGIC) {
+            printk("IDLE STACK OFLOW\n");
+            idle_task->kstack_magic = KSTACK_MAGIC;
+        }
+#endif
         schedule();
 #ifdef CONFIG_TIMER_INT0F
         int0F();        /* simulate timer interrupt hooked on IRQ 7 */
@@ -148,6 +206,7 @@ static void INITPROC early_kernel_init(void)
     ROOT_DEV = SETUP_ROOT_DEV;      /* default root device from boot loader */
 #ifdef CONFIG_BOOTOPTS
     opts.nextumb = opts.umbseg;     /* init static structure variables */
+    init_command = argv_init[1];    /* default startup task 1 */
     hasopts = parse_options();      /* parse options found in /bootops */
 #endif
 
@@ -172,31 +231,29 @@ static void INITPROC early_kernel_init(void)
 
 static void INITPROC kernel_init(void)
 {
-    irq_init();                     /* installs timer and div fault handlers */
-
-    /* set console from /bootopts console= or 0=default*/
-    set_console(boot_console);
-    console_init();                 /* init direct, bios or headless console*/
-
-#ifdef CONFIG_CHAR_DEV_RS
-    serial_init();
-#endif
-
-    inode_init();
-    if (buffer_init())  /* also enables xms and unreal mode if configured and possible*/
-        panic("No buf mem");
-
 #ifdef CONFIG_ARCH_IBMPC
     outw(0, 0x510);
     if (inb(0x511) == 'Q' && inb(0x511) == 'E')
         running_qemu = 1;
 #endif
+    irq_init();                     /* installs timer and div fault handlers */
 
+    debug("INT ENB\n");
+    set_irq();                      /* interrupts enabled early for jiffie timers */
+
+#ifdef CONFIG_CHAR_DEV_RS
+    serial_init();                  /* must init serial before console for ser console */
+#endif
+    set_console(boot_console);      /* change to /bootopts console= or default */
+    console_init();                 /* init direct, bios or headless console */
+
+    inode_init();
+    if (buffer_init())  /* also enables xms and unreal mode if configured and possible*/
+        panic("No buf mem");
 #ifdef CONFIG_SOCKET
     sock_init();
 #endif
-
-    device_init();                  /* interrupts enabled here for possible disk I/O */
+    device_init();                  /* init char and block devices */
 
 #ifdef CONFIG_BOOTOPTS
     finalize_options();
@@ -219,26 +276,7 @@ static void INITPROC kernel_init(void)
 
 static void INITPROC kernel_banner(seg_t init, seg_t extra)
 {
-#ifdef CONFIG_ARCH_IBMPC
-    printk("PC/%cT class cpu %d, ", (sys_caps & CAP_PC_AT) ? 'A' : 'X', arch_cpu);
-#endif
-
-#ifdef CONFIG_ARCH_PC98
-    printk("PC-9801 cpu %d, ", arch_cpu);
-#endif
-
-#ifdef CONFIG_ARCH_8018X
-    printk("8018X machine, ");
-#endif
-
-#ifdef CONFIG_ARCH_SWAN
-    printk("WonderSwan, ");
-#endif
-
-#ifdef CONFIG_ARCH_SOLO86
-    printk("Solo/86 machine, ");
-#endif
-
+    kernel_banner_arch();
     printk("syscaps %x, %uK base ram, %d tasks, %d files, %d inodes\n",
         sys_caps, SETUP_MEM_KBYTES, max_tasks, nr_file, nr_inode);
     printk("ELKS %s (%u text, %u ftext, %u data, %u bss, %u heap)\n",
@@ -264,18 +302,18 @@ static void INITPROC try_exec_process(const char *path)
 
 static void INITPROC do_init_task(void)
 {
-    int num;
+    int num, execinit;
     const char *s;
 
     mount_root();
 
-#ifdef CONFIG_SYS_NO_BININIT
     /* when no /bin/init, force initial process group on console to make signals work*/
-    current->session = current->pgrp = 1;
-#endif
+    execinit = (strcmp(init_command, bininit) == 0) && (sys_access(bininit, 1) == 0);
+    if (!execinit)
+        current->session = current->pgrp = 1;
 
     /* Don't open /dev/console for /bin/init, 0-2 closed immediately and fragments heap*/
-    //if (strcmp(init_command, bininit) != 0) {
+    //if (!execinit) {
         /* Set stdin/stdout/stderr to /dev/console if not running /bin/init*/
         num = sys_open(s="/dev/console", O_RDWR, 0);
         if (num < 0)
@@ -295,21 +333,14 @@ static void INITPROC do_init_task(void)
 #endif
     seg_add(DEF_OPTSEG, DMASEG);    /* DEF_OPTSEG through REL_INITSEG */
 
-    /* pass argc/argv/env array to init_command */
-
-    /* unset special sys_wait4() processing if pid 1 not /bin/init*/
-    if (strcmp(init_command, bininit) != 0)
-        current->ppid = 1;      /* turns off auto-child reaping*/
-
-    /* run /bin/init or init= command, normally no return*/
+    /* run /bin/init or init= command w/argc/argv/env, normally no return*/
     run_init_process_sptr(init_command, (char *)argv_init, argv_slen);
 #else
     try_exec_process(init_command);
 #endif /* CONFIG_BOOTOPTS */
 
-    printk("No init - running %s\n", binshell);
-    current->ppid = 1;          /* turns off auto-child reaping*/
-    try_exec_process(binshell);
+    printk("No %s - running sh\n", init_command);
+    try_exec_process("/bin/sh");
     try_exec_process("/bin/sash");
     panic("No init or sh found");
 }
@@ -558,6 +589,10 @@ static int INITPROC parse_options(void)
         }
         if (!strcmp(line,"kstack")) {
             tracing |= TRACE_KSTACK;
+            continue;
+        }
+        if (!strcmp(line,"istack")) {
+            tracing |= TRACE_ISTACK;
             continue;
         }
         if (!strncmp(line,"init=",5)) {

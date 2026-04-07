@@ -23,10 +23,13 @@ OBJS = \
 	getenv.o \
 	getpass.o \
 	getopt.o \
+	hexdump.o \
 	itoa.o \
 	ltoa.o \
 	ltostr.o \
 	lltostr.o \
+	linenoise.o \
+	linenoise_compl.o \
 	mktemp.o \
 	popen.o \
 	ptostr.o \

@@ -23,7 +23,7 @@ CLEANME 	=
 
 DEPEND  	= 
 
-DISTFILES	= syscall.dat
+DISTFILES	= 
 
 NOINDENT	= irqtab.S process.c strace.h system.c timer.c
 
@@ -36,30 +36,32 @@ include $(BASEDIR)/Makefile-rules
 # Objects to be compiled.
 
 OBJS  = strace.o irq.o irqtab.o process.o \
-		entry.o signal.o timer.o
+		entry.o signal.o timer.o softirq.o
 
 ifeq ($(CONFIG_ARCH_IBMPC), y)
-OBJS += irq-8259.o reset-ibm.o timer-8254.o
-OBJS += divzero.o
+OBJS += irq-8259.o reset-ibm.o timer-8254.o divzero.o nmi.o
 endif
 
 ifeq ($(CONFIG_ARCH_PC98), y)
-OBJS += irq-8259.o reset-stubs.o timer-8254.o
+OBJS += irq-8259.o reset-pc98.o timer-8254.o divzero.o nmi.o
+endif
+
+ifeq ($(CONFIG_ARCH_SOLO86), y)
+OBJS += irq-solo86.o reset-stubs.o timer-8254.o divzero.o nmi.o
 endif
 
 ifeq ($(CONFIG_ARCH_8018X), y)
 OBJS += irq-8018x.o reset-stubs.o timer-8018x.o
 endif
 
-ifeq ($(CONFIG_ARCH_SWAN), y)
-OBJS += irq-swan.o reset-swan.o system-swan.o timer-swan.o
-else
-OBJS += system.o
+ifeq ($(CONFIG_ARCH_NECV25), y)
+OBJS += irq-necv25.o reset-stubs.o timer-necv25.o divzero.o nmi.o ibrk-necv25.o
 endif
 
-ifeq ($(CONFIG_ARCH_SOLO86), y)
-OBJS += irq-solo86.o reset-stubs.o timer-8254.o
-OBJS += divzero.o
+ifeq ($(CONFIG_ARCH_SWAN), y)
+OBJS += irq-swan.o reset-swan.o timer-swan.o system-swan.o divzero.o nmi.o
+else
+OBJS += system.o
 endif
 
 #########################################################################
@@ -79,11 +81,6 @@ strace.o: strace.c
 
 #########################################################################
 # Standard commands.
-
-distdir:
-	cp -pf Makefile mkentry.sh $(DISTDIR)/arch/i86/kernel
-	cp -pf syscall.dat $(DISTDIR)/arch/i86/kernel
-	cp -pf *.c $(DISTDIR)/arch/i86/kernel
 
 #########################################################################
 ### Dependencies:

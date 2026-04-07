@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 
-# This build script is called in main.yml by GitHub Continuous Integration
-# Full build (including the cross tool chain)
-
-# Arguments:
-#   - 'auto' : continuous integration context
+# ELKS System Builder
+# This build script is also called in main.yml for GitHub Continuous Integration
+#
+# Usage: ./build.sh [auto [[ext] [[[allimages]]]]]
+#   <no args>:  user build: build cross-compiler, menuconfig kernel and standard apps
+#   auto        github CI build:: just IBM PC, 8018X, NECV25 kernel and standard apps
+#   ext         also build external apps (requires OpenWatcom C installed)
+#   allimages   also build all floppy and HD disk images
+#
+# After building the system once, the following can be used to rebuild the system:
+#   $ make clean
+#   $ make
+#   $ ./buildext.sh all     # optionally build specified external apps (OpenWatcom reqd)
+#   $ ./qemu.sh
+#
 set -e
 
 SCRIPTDIR="$(dirname "$0")"
@@ -63,12 +73,19 @@ if [ "$1" != "auto" ]; then
 echo "Building all..."
 make -j1 all || clean_exit 5
 
+if [ "$2" = "ext" ]; then
+    echo "Building external applications..."
+    ./buildext.sh all || clean_exit 51
+fi
+
 # Possibly build all images
 
-if [ "$2" = "allimages" ]; then
-	echo "Building all images..."
+if [ "$3" = "allimages" ]; then
+	echo "Building FD images..."
 	cd image
-	make -j1 images || clean_exit 6
+	make -j1 images-minix images-fat || clean_exit 6
+	echo "Building HD images..."
+	make -j1 images-hd || clean_exit 61
 	cd ..
 fi
 
@@ -81,10 +98,20 @@ if [ "$1" = "auto" ]; then
     make -j1 || clean_exit 8
 fi
 
-# Build PC-98 kernel, some user land files and image
+# Build NEC V25 kernel and image
+if [ "$1" = "auto" ]; then
+    echo "Building NECV 25 image..."
+    cp necv25.config .config
+    make kclean || clean_exit 7
+    rm elkscmd/basic/*.o
+    make -j1 || clean_exit 8
+fi
+
+# Build PC-98 kernel, PC-98 Nano-X, some user land files and image
 if [ "$1" = "auto" ]; then
     echo "Building PC-98 image..."
     cp pc98-1232.config .config
+    ./buildext.sh microwindows_pc98
     make kclean || clean_exit 9
     rm bootblocks/*.o
     rm elkscmd/sys_utils/clock.o
@@ -92,7 +119,6 @@ if [ "$1" = "auto" ]; then
     rm elkscmd/sys_utils/meminfo.o
     rm elkscmd/sys_utils/beep.o
     rm elkscmd/basic/*.o
-    rm elkscmd/nano-X/*/*.o
     make -j1 || clean_exit 10
 fi
 

@@ -151,7 +151,7 @@ elks_open(int bx, int cx, int dx, int di, int si)
         if (fd < 0)
             return fd;
         unlink("/tmp/perror");
-        write(fd, efile, sizeof(efile));
+        int tmp = write(fd, efile, sizeof(efile));
         lseek(fd, 0L, 0);
         return fd;
     }
@@ -554,14 +554,6 @@ elks_fcntl(int bx, int cx, int dx, int di, int si)
         return fcntl(bx, F_SETFD, dx);
     case ELKS_F_SETFL:
         return fcntl(bx, F_SETFL, dx);
-        /*
-         * Fixme: Unpack and process elks file locks
-         */
-    case ELKS_F_GETLK:
-    case ELKS_F_SETLK:
-    case ELKS_F_SETLKW:
-        errno = EINVAL;
-        return -1;
     }
     errno = EINVAL;
     return -1;
