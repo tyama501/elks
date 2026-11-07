@@ -13,8 +13,8 @@
 #   USE_A20ASM		- use Chris Giese A20.ASM method (send D0, read, OR 2, D1, write)
 #   USE_HIMEM_AT	- use himem.sys PC AT method (send D1,DF,FF)
 #define USE_BIOS
-#define USE_A20ASM
-//#define USE_HIMEM_AT
+//#define USE_A20ASM
+#define USE_HIMEM_AT
 
 # Attempt to enable A20 address gate, return 0 on fail
 enable_a20_gate:
@@ -128,7 +128,7 @@ empty_8042:
 set_a20:
 	pushf			# save interrupt status
 	cli			# interrupts off
-	xor	%ah,%ah
+	or	%ah,%ah
 	jz	reset_a20
 
 	call	sync_8042

@@ -8,8 +8,6 @@
 #include <linuxmt/in.h>
 #include <linuxmt/net.h>
 
-#define TCP_DEVICE_NAME	"tcpdev"
-
 /* should be equal to PTYOUTQ_SIZE and telnetd buffer size*/
 #define	TDB_WRITE_MAX		512	/* max data in tdb_write packet to ktcp*/
 
@@ -30,7 +28,7 @@
 struct tdb_release {
     unsigned char cmd;
     struct socket *sock;
-    int reset;
+    int reset;                      /* SO_LINGER -> SF_RST_ON_CLOSE */
 };
 
 struct tdb_accept {
@@ -49,7 +47,8 @@ struct tdb_listen {
 struct tdb_bind {
     unsigned char cmd;
     struct socket *sock;
-    int reuse_addr;
+    int reuse_addr;                 /* SO_REUSEADDR -> SF_REUSE_ADDR */
+    int no_buffer;                  /* SO_NOBUFFER -> SF_NOBUF */
     int rcv_bufsiz;
     struct sockaddr_in addr;
 };
@@ -94,9 +93,12 @@ struct tdb_return_data {
 struct tdb_accept_ret {
     char type;
     int ret_value;
-    struct socket *sock;
+    struct socket *sock;		/* listen socket, for wake_up */
+    struct socket *newsock;		/* accepted socket, gets addr filled in */
     __u32 addr_ip;
     __u16 addr_port;
+    __u32 locaddr;
+    __u16 locport;
 };
 
 struct tdb_bind_ret {

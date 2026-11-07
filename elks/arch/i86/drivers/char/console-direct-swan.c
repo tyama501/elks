@@ -13,6 +13,7 @@
 #include <linuxmt/config.h>
 #include <linuxmt/debug.h>
 #include <linuxmt/mm.h>
+#include <linuxmt/segment.h>
 #include <linuxmt/sched.h>
 #include <linuxmt/string.h>
 #include <linuxmt/errno.h>
@@ -300,7 +301,7 @@ void INITPROC console_init(void)
 #error No font defined!
 #endif
 
-    NumConsoles = MAX_CONSOLES - 1;
+    NumConsoles = MAX_CONSOLES;
 
     for (i = 0; i < NumConsoles; i++) {
         /* Allocate room for console data */

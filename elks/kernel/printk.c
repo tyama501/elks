@@ -58,7 +58,7 @@ dev_t dev_console;
 #define DEVCONSOLE  MKDEV(TTY_MAJOR,TTY_MINOR_OFFSET)   /* /dev/tty1*/
 #endif
 static void (*kputc)(dev_t, int) = 0;
-
+static void dmesg_addch(int c);
 
 void set_console(dev_t dev)
 {
@@ -76,6 +76,8 @@ void kputchar(int ch)
 {
     if (ch == '\n')
             kputchar('\r');
+    if (dmesg_seg) 
+            dmesg_addch(ch);
     if (kputc)
             (*kputc)(dev_console, ch);
     else early_putchar(ch);
@@ -268,7 +270,7 @@ static void vprintk(const char *fmt, va_list p)
                 kputs(root_dev_name(va_arg(p, unsigned int))+8); /* skip ROOTDEV= */
                 break;
             case 's':
-                n = kernel_ds;
+                n = KERNEL_DS;
             str:
                 str = va_arg(p, char *);
                 while ((zero = peekb((word_t)str++, n))) {
@@ -368,3 +370,16 @@ void dprintk(const char *fmt, ...)
     va_end(p);
 }
 #endif
+
+static void dmesg_addch(int c)
+{
+    struct dmesg_queue __far *q = _MK_FP(dmesg_seg, 0);
+
+    clr_irq();
+    q->base[q->head] = c;
+    if (++q->head >= q->size)
+        q->head = 0;
+    if (q->len < q->size)
+        q->len++;
+    set_irq();
+}

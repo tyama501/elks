@@ -1,17 +1,29 @@
 #ifndef __LINUXMT_MM_H
 #define __LINUXMT_MM_H
 
+#include <linuxmt/config.h>
 #include <linuxmt/types.h>
 #include <linuxmt/list.h>
+#include <linuxmt/init.h>
 
+/* use 32-bit SELEXT_T for PM paragraph address >= 1M, keep small for real mode */
+#ifdef CONFIG_286_PMODE
+#define SELEXT_T    selext_t    /* PM 32-bit paragraph address or count */
+#else
+#define SELEXT_T    segext_t    /* RM 16-bit paragraph address or count */
+#endif
+
+/* main memory management, also used for XMS memory in PM */
 struct segment {
 	list_s    all;
 	list_s    free;
-	seg_t     base;
-	segext_t  size;
+	seg_t     base;             /* segment or selector used to access memory */
 	byte_t    flags;
 	byte_t    ref_count;
 	word_t    pid;
+	selext_t  addr;             /* mem paragraph address in PM (=0 in real mode kernel) */
+    /* following variable sized member must be last, or requires meminfo re-compilation */
+	SELEXT_T  size;             /* 16- or 32-bit size in paragraphs */
 };
 
 typedef struct segment segment_s;
@@ -20,6 +32,7 @@ typedef struct segment segment_s;
 #define SEG_FLAG_FREE    0x00
 #define SEG_FLAG_USED	 0x80
 #define SEG_FLAG_ALIGN1K 0x40
+#define SEG_FLAG_XMS     0x20   /* allocate only from XMS (PM only for now) */
 #define SEG_FLAG_TYPE	 0x0F
 #define SEG_FLAG_CSEG	 0x01   /* app code segment */
 #define SEG_FLAG_DSEG	 0x02   /* app auto (stack/heap) data segment */
@@ -27,6 +40,7 @@ typedef struct segment segment_s;
 #define SEG_FLAG_FDAT	 0x04   /* app fmemalloc far data */
 #define SEG_FLAG_EXTBUF	 0x05   /* ext/main memory buffers */
 #define SEG_FLAG_RAMDSK	 0x06   /* ram disk buffers */
+#define SEG_FLAG_VIDBUF  0x07   /* console video buffers */
 
 #ifdef __KERNEL__
 
@@ -55,8 +69,10 @@ int fs_memcmp(const void *,const void *,size_t);
 
 /* Memory allocation */
 
-segment_s * seg_alloc_fixed (seg_t, segext_t, word_t);
+void INITPROC seg_add(SELEXT_T start, SELEXT_T end);
 segment_s * seg_alloc (segext_t, word_t);
+segment_s * seg_alloc_xms (selext_t size, word_t type);     /* PM only for now */
+segment_s * seg_alloc_fixed (seg_t, segext_t, word_t);
 void seg_free (segment_s *);
 segment_s * seg_get (segment_s *);
 void seg_put (segment_s *);

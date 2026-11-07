@@ -6,14 +6,12 @@ endif
 include $(TOPDIR)/Make.defs
 
 .PHONY: all clean libc kconfig defconfig config menuconfig image images \
-    kimage kernel kclean owc c86
+    kimage kernel bootblocks elkscmd kclean owc c86
 
 all: .config include/autoconf.h
 	$(MAKE) -C libc all
 	$(MAKE) -C libc DESTDIR='$(TOPDIR)/cross' install
-	$(MAKE) -C elks all
-	$(MAKE) -C bootblocks all
-	$(MAKE) -C elkscmd all
+	$(MAKE) kernel bootblocks elkscmd
 	$(MAKE) -C image all
 ifeq ($(shell uname), Linux)
 	$(MAKE) -C elksemu PREFIX='$(TOPDIR)/cross' elksemu
@@ -25,10 +23,18 @@ image:
 images:
 	$(MAKE) -C image images
 
-kimage: kernel image
+kimage:
+	$(MAKE) -C elks all
+	$(MAKE) -C image
 
 kernel:
-	$(MAKE) -C elks
+	$(MAKE) -C elks all
+
+bootblocks:
+	$(MAKE) -C bootblocks all
+
+elkscmd: libc kernel
+	$(MAKE) -C elkscmd all
 
 kclean:
 	$(MAKE) -C elks kclean
@@ -60,10 +66,10 @@ owclean:
 	$(MAKE) -C elkscmd owclean
 
 owlibc:
-	#$(MAKE) -C libc -f watcom.mk MODEL=c
-	$(MAKE) -C libc -f watcom.mk MODEL=s
-	$(MAKE) -C libc -f watcom.mk MODEL=m
-	$(MAKE) -C libc -f watcom.mk MODEL=l
+	#$(MAKE) -C libc -j1 -f watcom.mk MODEL=c
+	$(MAKE) -C libc -j1 -f watcom.mk MODEL=s
+	$(MAKE) -C libc -j1 -f watcom.mk MODEL=m
+	$(MAKE) -C libc -j1 -f watcom.mk MODEL=l
 
 owc: owlibc
 	$(MAKE) -C elkscmd owc
@@ -86,6 +92,9 @@ kconfig:
 
 defconfig:
 	$(RM) .config
+	@yes '' | ${MAKE} config
+
+yesconfig:
 	@yes '' | ${MAKE} config
 
 include/autoconf.h: .config

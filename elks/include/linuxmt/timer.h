@@ -18,7 +18,7 @@
 struct timer_list {
     struct timer_list *tl_next;
     jiff_t tl_expires;
-    int tl_data;
+    void *tl_data;
     void (*tl_function) ();
 };
 
@@ -35,5 +35,10 @@ void spin_timer(int);
 /* timer-8254.c*/
 void enable_timer_tick(void);
 void disable_timer_tick(void);
+
+/* sys2.c */
+struct task_struct;
+struct timer_list *find_alarm(struct task_struct *t);
+void cancel_alarm(struct timer_list *ap);
 
 #endif

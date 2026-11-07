@@ -367,8 +367,8 @@ void INITPROC blk_dev_init(void)
     rd_init();          /* RAMDISK block device*/
 #endif
 
-#ifdef CONFIG_BLK_DEV_HD
-    struct gendisk *hddisk = directhd_init();
+#ifdef CONFIG_BLK_DEV_MFMHD
+    struct gendisk *mfmdisk = mfmhd_init();
 #endif
 
 #ifdef CONFIG_BLK_DEV_FD
@@ -398,5 +398,10 @@ void INITPROC blk_dev_init(void)
 #ifdef CONFIG_BLK_DEV_ATA_CF
     if (atadisk)
         init_partitions(atadisk);
+#endif
+
+#ifdef CONFIG_BLK_DEV_MFMHD
+    if (mfmdisk)
+        init_partitions(mfmdisk);
 #endif
 }

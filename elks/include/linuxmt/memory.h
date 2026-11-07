@@ -1,9 +1,11 @@
 #ifndef __LINUXMT_MEMORY_H
 #define __LINUXMT_MEMORY_H
 
-/* memory primitives */
+/* memory copy primitives */
 
+#include <linuxmt/config.h>
 #include <linuxmt/types.h>
+#include <linuxmt/segment.h>    /* only for backwards compatibility for _MK_FP */
 
 byte_t peekb (word_t off, seg_t seg);
 word_t peekw (word_t off, seg_t seg);
@@ -25,11 +27,6 @@ void fmemcpyw (void * dst_off, seg_t dst_seg, void * src_off, seg_t src_seg, siz
 word_t fmemcmpb (void * dst_off, seg_t dst_seg, void * src_off, seg_t src_seg, size_t count);
 word_t fmemcmpw (void * dst_off, seg_t dst_seg, void * src_off, seg_t src_seg, size_t count);
 
-/* macros for far pointers (a la Turbo C++ and Open Watcom) */
-#define _FP_SEG(fp)     ((unsigned)((unsigned long)(void __far *)(fp) >> 16))
-#define _FP_OFF(fp)     ((unsigned)(unsigned long)(void __far *)(fp))
-#define _MK_FP(seg,off) ((void __far *)((((unsigned long)(seg)) << 16) | ((unsigned int)(off))))
-
 /* unreal mode, A20 gate management */
 void enable_unreal_mode(void);	/* requires 386+ CPU to call */
 int enable_a20_gate(void);      /* returns 0 on fail */
@@ -41,6 +38,7 @@ int enable_a20_gate(void);      /* returns 0 on fail */
 #define XMS_UNREAL      1   /* using unreal mode and linear32_fmemcpy for block moves */
 #define XMS_INT15       2   /* using BIOS INT 15 block move (or INT 1F on PC-98) */
 #define XMS_LOADALL     3   /* using LOADALL 286 opcode and loadall_block_move */
+#define XMS_PMODE       4   /* using protected mode selectors and fmemcpy */
 extern int xms_bootopts;    /* xms=on or xms=int15 /bootopts setting, default off */
 
 #ifdef CONFIG_FS_XMS

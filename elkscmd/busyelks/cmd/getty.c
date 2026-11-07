@@ -76,7 +76,6 @@
 #include <unistd.h>
 
 #define LOGIN		"/bin/login"
-#define HOSTFILE	"/etc/HOSTNAME"
 #define ISSUE		"/etc/issue"
 
 char	Buffer[64];
@@ -87,32 +86,6 @@ char	Host[256], *Date = 0, *Time = 0;
 
 char	*nargv[3] = {NULL, NULL, NULL};
 int	ch, col = 0, fd;
-
-#ifndef SUPER_SMALL
-
-void host(void) {
-    char *ptr;
-    int fp = open(HOSTFILE,O_RDONLY), sz;
-
-    if (fp != NULL) {
-	sz = read( fp, Host, 255);
-	if (sz >= 0)
-	    Host[sz] = '\0';
-	else
-	    *Host = '\0';
-	close(fp);
-    }
-    for (ptr = Host; isprint(*ptr); ptr++)
-	/* Do nothing */;
-    while (ptr[-1] == ' ')
-	ptr--;
-    *ptr = '\0';
-    if (!*Host)
-	strcpy( Host, "LocalHost" );
-    debug1( "DEBUG: host() = <%s>\n", Host );
-}
-
-#endif
 
 void put(int ch) {
     if (ch == '\n' || ch == '\f')
@@ -208,7 +181,6 @@ void getty_main(int argc, char **argv) {
 	    write(1,Buffer,n);
 #else
 	when();
-	host();
 	*Buffer = '\0';
 	while (read(fd,Buffer,1) > 0) {
 	    ch = *Buffer;

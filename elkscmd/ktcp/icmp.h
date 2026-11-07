@@ -50,5 +50,9 @@ struct icmp_dest_unreachable_s {
 
 int icmp_init(void);
 void icmp_process(struct iphdr_s *iph, unsigned char *packet);
+void icmp_send_echo(ipaddr_t target_ip, unsigned short id, unsigned short seq,
+    unsigned long timestamp, unsigned int ttl);
+void icmp_send_time_exceeded(struct iphdr_s *orig_iph);
+void icmp_send_port_unreachable(struct iphdr_s *orig_iph);
 
 #endif

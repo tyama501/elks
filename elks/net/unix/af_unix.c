@@ -146,16 +146,19 @@ static int unix_bind(struct socket *sock, struct sockaddr *umyaddr, int sockaddr
 {
     struct unix_proto_data *upd = sock->data;
     unsigned short old_ds;
-    int i;
-
-    if (sockaddr_len <= 0 || sockaddr_len > sizeof(struct sockaddr_un))
-	return -EINVAL;
+    int i, path_len;
 
     if (upd->sockaddr_len || upd->inode)
 	return -EINVAL;		/* already bound */
 
+    if (sockaddr_len <= offsetof(struct sockaddr_un, sun_path) ||
+        sockaddr_len > offsetof(struct sockaddr_un, sun_path) + UNIX_PATH_MAX - 1)
+            return -EINVAL;
+    path_len = sockaddr_len - offsetof(struct sockaddr_un, sun_path);
+    memset(&upd->sockaddr_un, 0, sizeof(upd->sockaddr_un));
+
     memcpy_fromfs(&upd->sockaddr_un, umyaddr, sockaddr_len);
-    upd->sockaddr_un.sun_path[sockaddr_len] = '\0';
+    upd->sockaddr_un.sun_path[path_len] = '\0';
 
     if (upd->sockaddr_un.sun_family != AF_UNIX)
 	return -EINVAL;
@@ -186,14 +189,11 @@ static int unix_bind(struct socket *sock, struct sockaddr *umyaddr, int sockaddr
 static int
 unix_connect(struct socket *sock, struct sockaddr *uservaddr, int sockaddr_len, int flags)
 {
-    struct sockaddr_un sockun;
     struct unix_proto_data *serv_upd;
     struct inode *inode;
     unsigned short old_ds;
-    int i;
-
-    if (sockaddr_len <= 0 || sockaddr_len > sizeof(struct sockaddr_un))
-	return -EINVAL;
+    int i, path_len;
+    struct sockaddr_un sockun;
 
     if (sock->state == SS_CONNECTING)
 	return -EINPROGRESS;
@@ -201,11 +201,17 @@ unix_connect(struct socket *sock, struct sockaddr *uservaddr, int sockaddr_len, 
 /*    if (sock->state == SS_CONNECTED)
 	return -EISCONN;*/	/*Already checked in socket.c*/
 
-    if (get_user(&(((struct sockaddr_un *)uservaddr)->sun_family)) != AF_UNIX)
-	return -EINVAL;
+    if (sockaddr_len <= offsetof(struct sockaddr_un, sun_path) ||
+        sockaddr_len > offsetof(struct sockaddr_un, sun_path) + UNIX_PATH_MAX - 1)
+            return -EINVAL;
+    path_len = sockaddr_len - offsetof(struct sockaddr_un, sun_path);
+    memset(&sockun, 0, sizeof(sockun));
 
     memcpy_fromfs(&sockun, uservaddr, sockaddr_len);
-    sockun.sun_path[sockaddr_len] = '\0';
+    sockun.sun_path[path_len] = '\0';
+
+    if (get_user(&(((struct sockaddr_un *)uservaddr)->sun_family)) != AF_UNIX)
+	return -EINVAL;
 
 /*
  * Try to open the name in the filesystem - this is how we identify ourselves
@@ -531,8 +537,9 @@ static int unix_listen(struct socket *sock, int backlog)
     return 0;
 }
 
-static int unix_send(struct socket *sock,
-		     void *buff, int len, int nonblock, unsigned int flags)
+#if UNUSED
+static int unix_send(struct socket *sock, void *buff, int len, int nonblock,
+	unsigned int flags)
 {
     if (flags != 0)
 	return -EINVAL;
@@ -540,18 +547,15 @@ static int unix_send(struct socket *sock,
     return unix_write(sock, (char *) buff, len, nonblock);
 }
 
-/*
- *      Receive data. This version of AF_UNIX also lacks MSG_PEEK 8(
- */
-
-static int
-unix_recv(struct socket *sock, void *buff, int len, int nonblock, unsigned flags)
+static int unix_recv(struct socket *sock, void *buff, int len, int nonblock,
+	unsigned flags)
 {
     if (flags != 0)
 	return -EINVAL;
 
     return unix_read(sock, (char *) buff, len, nonblock);
 }
+#endif
 
 struct proto_ops unix_proto_ops = {
     PF_UNIX,
@@ -568,8 +572,6 @@ struct proto_ops unix_proto_ops = {
     unix_select,
     NULL,
     unix_listen,
-    unix_send,
-    unix_recv,
 };
 
 void unix_proto_init(struct net_proto *pro)

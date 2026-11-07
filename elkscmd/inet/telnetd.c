@@ -179,7 +179,7 @@ void
 sigchild(int sig)
 {
     signal(SIGCHLD, sigchild);
-    while (waitpid(-1, NULL, WNOHANG) > 0)
+    while ((int)waitpid(-1, NULL, WNOHANG) > 0)
         continue;
 }
 
@@ -201,9 +201,8 @@ main(int argc, char **argv)
         perror("SO_REUSEADDR");
 
     /* set small listen buffer to save ktcp memory */
-    ret = SO_LISTEN_BUFSIZ;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &ret, sizeof(int)) < 0)
-        perror("SO_RCVBUF");
+    if (setsockopt(sockfd, SOL_SOCKET, SO_NOBUFFER, NULL, 0) < 0)
+        perror("SO_NOBUFFER");
 
     memset(&addr_in, 0, sizeof(addr_in));
     addr_in.sin_family = AF_INET;

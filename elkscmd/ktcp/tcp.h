@@ -145,6 +145,7 @@ struct tcpcb_s {
 	__u32	time_wait_exp;
 
 	short	bytes_to_push;
+	short	bytes_notified;		/* last bytes_to_push sent */
 
 	__u32	send_una;
 	__u32	send_nxt;
@@ -166,6 +167,7 @@ struct tcpcb_s {
 	__u16	buf_tail;
 	__u16	buf_used;		/* # valid bytes in buffer */
 	__u16	buf_size;		/* total buffer size */
+	__u16	acc_size;		/* accept CB buffer size from SO_RCVBUF */
 	__u8	buf_base[];
 };
 

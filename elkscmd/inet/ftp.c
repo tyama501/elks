@@ -17,7 +17,6 @@
 #ifdef  BLOATED
 #define GLOB		/* include wildcard processing */
 #endif
-#define	QEMUHACK	/* Include code for QEMU special treatment */
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -158,13 +157,9 @@ static char type = ASCII, atype = ASCII;
 static int prompt = TRUE, glob = TRUE;
 static int check_connected = 0;
 static int connected = 0;
-static char srvr_ip[ADDRBUF], myip[ADDRBUF]; 	/* For qemu hack */
+static char srvr_ip[ADDRBUF], myip[ADDRBUF];
 
 void print_timing(unsigned long, struct timeval *, struct timeval *, char *);
-
-#ifdef QEMUHACK
-static int qemu = 0;
-#endif
 
 /* Trim leading and trailing whitespaces */
 void trim(char *str) {
@@ -688,6 +683,9 @@ void print_timing(unsigned long bcnt, struct timeval *m_start, struct timeval *m
 
 	ms = (((m_end->tv_sec * 1000000) + m_end->tv_usec) -
 		((m_start->tv_sec * 1000000) + m_start->tv_usec))/1000;
+	if (ms == 0)
+		ms = 1;		/* transfer completed within the clock's resolution:
+				 * dividing by ms below would fault */
 	rest = ms;
 	bps = (unsigned int)__divmod(bcnt, &rest);
 	rest = (unsigned int)(((long)rest*1000L)/ms);		/* scale the decimal */
@@ -816,12 +814,6 @@ int do_active(int cmdfd) {
 	unsigned int myport;
 	char str[BUF_SIZE], port_mode_ip[ADDRBUF], *p;
 
-#ifdef QEMUHACK
-	if (qemu) {
-		printf("Active mode is not supported in QEMU, use passive mode.\n");
-		return -1;
-	}
-#endif
 	if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
 		perror("socket");
 		return -1;
@@ -831,9 +823,8 @@ int do_active(int cmdfd) {
 	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) < 0)
 		perror("SO_REUSEADDR");
 
-	i = SO_LISTEN_BUFSIZ;
-	if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &i, sizeof(i)) < 0) 
-		perror("SO_RCVBUF");
+	if (setsockopt(fd, SOL_SOCKET, SO_NOBUFFER, NULL, 0) < 0)
+		perror("SO_NOBUFFER");
 
 	bzero(&myaddr, sizeof(myaddr));
 	myaddr.sin_family = AF_INET;
@@ -871,6 +862,28 @@ int do_active(int cmdfd) {
 
 /* PASSIVE MODE:
  * Connect to service point announced by server */
+/* Decipher the port from an EPSV 229 reply (|||port|) */
+int get_epsv_port(char *str, unsigned int *server_port) {
+	char *p;
+
+	p = strrchr(str, ')');
+	if (!p)
+		return -1;
+	while (p > str && *p != '|')
+		p--;
+	if (*p != '|')
+		return -1;
+	p--;			/* step off the closing delimiter */
+	while (p > str && *p != '|')
+		p--;
+	if (*p != '|')
+		return -1;
+	*server_port = atoi(p + 1);
+	if (*server_port == 0)
+		return -1;
+	return 1;
+}
+
 int do_passive(int cmdfd) {
 	
 	struct sockaddr_in srvaddr;
@@ -878,14 +891,28 @@ int do_passive(int cmdfd) {
 	unsigned int port;
 	char command[BUF_SIZE], *ip, ip_addr[ADDRBUF];
 
-	send_cmd(cmdfd, "PASV\r\n");
-	get_reply(cmdfd, command, sizeof(command), 1);
-	if (strncmp(command, "227", 3)) {
-		return -1;
-	}
-	
-	if (get_server_ip_port(command, ip_addr, &port) < 0) {
-		printf("Passive mode error: %s", command);
+	/* Try EPSV (RFC 2428) first - no IP advertised, client uses the
+	 * control connection's server address */
+	send_cmd(cmdfd, "EPSV\r\n");
+	get_reply(cmdfd, command, sizeof(command), 10);
+	if (!strncmp(command, "229", 3)) {
+		if (get_epsv_port(command, &port) < 0) {
+			printf("Extended passive mode error: %s", command);
+			return -1;
+		}
+		strcpy(ip_addr, srvr_ip);
+	} else if (!strncmp(command, "5", 1)) {
+		/* EPSV not supported - fall back to classic PASV */
+		send_cmd(cmdfd, "PASV\r\n");
+		get_reply(cmdfd, command, sizeof(command), 1);
+		if (strncmp(command, "227", 3)) {
+			return -1;
+		}
+		if (get_server_ip_port(command, ip_addr, &port) < 0) {
+			printf("Passive mode error: %s", command);
+			return -1;
+		}
+	} else {
 		return -1;
 	}
 	if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -903,11 +930,12 @@ int do_passive(int cmdfd) {
 	} 
 
 	ip = ip_addr;
-#ifdef QEMUHACK
-	if (qemu) ip = srvr_ip;
-#endif
 	srvaddr.sin_family = AF_INET;
-	srvaddr.sin_addr.s_addr = in_aton(ip);
+	srvaddr.sin_addr.s_addr = in_gethostbyname(ip);
+	if (srvaddr.sin_addr.s_addr == 0) {
+		printf("Host name not found.\n");
+		return -1;
+	}
 	srvaddr.sin_port = htons(port);
 
 	if (debug > 1) printf("Connecting to %s @ %u\n", ip, port);
@@ -1057,23 +1085,13 @@ int connect_cmd(char *ip, unsigned int server_port) {
 		printf("Host name not found.\n");
 		return -1;
 	}
-#ifdef QEMUHACK
-	if (qemu) {
-		long madr = in_aton(myip);
-		long loopback = in_aton("127.0.0.1");
-		if ((servaddr.sin_addr.s_addr == loopback) || (servaddr.sin_addr.s_addr == madr)) {
-			printf("loopback detected, disabling QEMU mode.\n");
-			qemu = 0;
-			servaddr.sin_addr.s_addr = madr;
-		}
-	}
-#endif
 
 	if (debug > 1) printf("Connecting to %s @ port %u\n", in_ntoa(servaddr.sin_addr.s_addr), server_port);
 	if (in_connect(controlfd, (struct sockaddr *) &servaddr, sizeof(servaddr), 10) < 0) {
 		perror("ftp");
 		controlfd = -1;
-	}
+	} else
+		get_ip_port(controlfd, myip, &myport);	/* refresh: advertise conn local addr */
 	return controlfd;
 }
 
@@ -1094,14 +1112,6 @@ int do_login(char *user, char *passwd, char *buffer, int len, char *ip,
 	char localbf[50], *lip, *cp;
 	int controlfd = -1;
 
-#ifdef QEMUHACK
-	/* Check for QEMU mode - repeat on every login, since a loopback
-	 * connection may have temporarily disabled QEMU mode. */
-	if ((cp = getenv("QEMU")) != NULL) {
-		qemu = atoi(cp);
-		printf("QEMU set to %d\n", qemu);
-	}
-#endif
 	lip = ip;
 	if (*lip == '\0') {	/* ask for server address */
 				//FIXME: Needs sanity checking on input
@@ -1133,7 +1143,9 @@ int do_login(char *user, char *passwd, char *buffer, int len, char *ip,
 		return -1;
 	}
 	if (*passwd == '\0') {
-		lip = getpass("Password:");
+		printf("Password: ");
+		fflush(stdout);
+		lip = getpass("");
 		printf("\n");
 		if (strlen(lip) < 2) lip = passwd; /* use passwd from command line if present */
 	} else lip = passwd;
@@ -1203,11 +1215,6 @@ int main(int argc, char **argv) {
 				break;
 			case 'i':
 				prompt = FALSE;
-				break;
-#endif
-#ifdef QEMUHACK
-			case 'q':
-				qemu++;
 				break;
 #endif
 			default:

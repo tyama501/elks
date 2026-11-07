@@ -5,7 +5,7 @@
 #include <linuxmt/socket.h>
 
 /* Number of protocols */
-#define NPROTO 3
+#define NPROTO 2
 
 #define SOCK_INODE(S)	((S)->inode)
 
@@ -27,14 +27,14 @@ struct socket {
     struct inode *inode;
     struct file *file;
 
-#if defined(CONFIG_UNIX)
+#ifdef CONFIG_UNIX
     struct socket *conn;
     struct socket *iconn;
     struct socket *next;
     void *data;
 #endif
 
-#if defined(CONFIG_INET)
+#ifdef CONFIG_INET
     sem_t sem;			/* one operation at a time per socket */
     int avail_data;		/* data available for reading from ktcp */
     int retval;			/* event return value from ktcp */
@@ -61,8 +61,6 @@ struct proto_ops {
     int (*select) ();
     int (*ioctl) ();
     int (*listen) ();
-    int (*send) ();
-    int (*recv) ();
 };
 #endif
 
@@ -74,6 +72,7 @@ struct proto_ops {
 #define SF_RST_ON_CLOSE	(1 << 4) /* inet */
 #define SF_REUSE_ADDR	(1 << 5) /* inet */
 #define SF_CONNECT	(1 << 6) /* inet */
+#define SF_NOBUF        (1 << 7) /* inet */
 
 struct net_proto {
     const char *name;		/* Protocol name */

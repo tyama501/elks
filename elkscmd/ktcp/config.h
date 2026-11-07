@@ -8,7 +8,7 @@
 /* turn these on for ELKS debugging*/
 #define USE_DEBUG_EVENT 1	/* use CTRLP to toggle debug output*/
 #define DEBUG_STARTDEF	0	/* default startup debug display*/
-#define DEBUG_TCP	0	/* TCP ops*/
+#define DEBUG_TCP	1	/* TCP ops*/
 #define DEBUG_TCPPKT	0	/* TCP packets info*/
 #define DEBUG_TCPDATA	1	/* TCP packet data display*/
 #define DEBUG_CWND	0	/* TCP congestion control*/

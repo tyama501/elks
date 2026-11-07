@@ -200,7 +200,7 @@ static void save_path(struct inode *inode, const char *pathname)
 {
 #ifdef CHECK_FREECNTS
     if (!inode->i_path[0])
-        fmemcpyb(inode->i_path, kernel_ds, (void *)pathname, current->t_regs.ds,
+        fmemcpyb(inode->i_path, KERNEL_DS, (void *)pathname, current->t_regs.ds,
             sizeof(inode->i_path));
 #endif
 }
@@ -354,19 +354,7 @@ int open_namei(const char *pathname, int flag, mode_t mode,
     }
     if (!error) {
         if (flag & O_TRUNC) {
-
-#ifdef USE_NOTIFY_CHANGE
-            struct iattr newattrs;
-            newattrs.ia_size = 0;
-            newattrs.ia_valid = ATTR_SIZE;
-            if ((error = notify_change(inode, &newattrs))) {
-                iput(inode);
-                return error;
-            }
-#else
             inode->i_size = 0L;
-#endif
-
             down(&inode->i_sem);
             if ((iop = inode->i_op) && iop->truncate) iop->truncate(inode);
             up(&inode->i_sem);

@@ -33,7 +33,7 @@ int tcpdev_init(char *fdev)
 {
     int fd  = open(fdev, O_NONBLOCK | O_RDWR);
     if (fd < 0)
-	printf("ktcp: can't open tcpdev device %s\n",fdev);
+	printf("ktcp: can't open %s (is network already running?)\n", fdev);
     return fd;
 }
 
@@ -55,6 +55,7 @@ void notify_data_avail(struct tcpcb_s *cb)
 	//return;
 
     notify_sock(cb->sock, TDT_AVAIL_DATA, cb->bytes_to_push);
+    cb->bytes_notified = cb->bytes_to_push;
 }
 
 void retval_to_sock(void *sock, int retval)
@@ -67,7 +68,7 @@ static void tcpdev_bind(void)
 {
     struct tdb_bind *db = (struct tdb_bind *)sbuf; /* read from sbuf*/
     struct tcpcb_list_s *n;
-    int size;
+    int size = 0;
     __u16 port;
     struct tdb_bind_ret bind_ret;
 
@@ -76,8 +77,12 @@ static void tcpdev_bind(void)
 	return;
     }
 
-    /* SO_RCVBUF currently only sets listen or connect buffer size, NOT accept size!*/
-    size = db->rcv_bufsiz? db->rcv_bufsiz: CB_NORMAL_BUFSIZ;
+    /*
+     * Use SO_NOBUFFER on listen sockets to save ktcp heap.
+     * Use SO_RCVBUF set connect or accept CB buffer size.
+     */
+    if (!db->no_buffer)
+	size = db->rcv_bufsiz? db->rcv_bufsiz: CB_NORMAL_BUFSIZ;
     n = tcpcb_new(size);
     if (n == NULL) {
 	retval_to_sock(db->sock,-ENOMEM);
@@ -95,7 +100,8 @@ static void tcpdev_bind(void)
 	struct tcpcb_list_s *n2 = tcpcb_check_port(port);
 	if (n2) {			/* port already bound */
 	    if (!db->reuse_addr) {	/* no SO_REUSEADDR on socket */
-		debug_tune("tcp: port %u already bound, rejecting (use SO_REUSEADDR?)\n", port);
+		debug_tune("tcp: port %u already bound, rejecting (use SO_REUSEADDR?)\n",
+			port);
 reject:
 		tcpcb_remove(n);
 		retval_to_sock(db->sock, -EADDRINUSE);
@@ -104,11 +110,11 @@ reject:
 
 	    /* remove TCB control block on SO_REUSEADDR to save heap space */
 	    if (n2->tcpcb.state == TS_TIME_WAIT) {
-		LEAVE_TIME_WAIT(&n2->tcpcb);	/* entered via FIN_WAIT_2 state on FIN rcvd*/
+		LEAVE_TIME_WAIT(&n2->tcpcb); /* entered via FIN_WAIT_2 state on FIN rcvd*/
 		tcpcb_remove(n2);
-		debug_tune("tcp: port %u REUSED, freeing previous socket in time_wait\n", port);
+		debug_tune("tcp: port %u reused, freeing socket in time_wait\n", port);
 	    } else {
-		printf("tcp: port %u NOT reused, previous socket in state %d\n",
+		debug_tune("tcp: port %u not reused, socket state %d\n",
 			port, n2->tcpcb.state);
 		goto reject;
 	    }
@@ -116,14 +122,18 @@ reject:
     }
 
     n->tcpcb.sock = db->sock;
-    n->tcpcb.localaddr = local_ip;
+    n->tcpcb.acc_size = db->rcv_bufsiz;
+    if (db->addr.sin_addr.s_addr == htonl(0x7f000001))
+        n->tcpcb.localaddr = db->addr.sin_addr.s_addr;
+    else
+        n->tcpcb.localaddr = local_ip;
     n->tcpcb.localport = port;
     n->tcpcb.state = TS_CLOSED;
 
     bind_ret.type = TDT_BIND;
     bind_ret.ret_value = 0;
     bind_ret.sock = db->sock;
-    bind_ret.addr_ip = local_ip;
+    bind_ret.addr_ip = n->tcpcb.localaddr;
     bind_ret.addr_port = htons(port);
     write(tcpdevfd, &bind_ret, sizeof(bind_ret));
 }
@@ -165,10 +175,12 @@ static void tcpdev_accept(void)
 
     accept_ret.type = TDT_ACCEPT;
     accept_ret.ret_value = 0;
-    accept_ret.sock = sock;		/* report back listen socket*/
-    //accept_ret.sock = db->newsock;	/* report back new socket*/
+    accept_ret.sock = sock;		/* report back listen socket, for wake_up */
+    accept_ret.newsock = db->newsock;	/* kernel stores addr into this sock */
     accept_ret.addr_ip = cb->remaddr;
     accept_ret.addr_port = htons(cb->remport);
+    accept_ret.locaddr = cb->localaddr;
+    accept_ret.locport = htons(cb->localport);
     write(tcpdevfd, &accept_ret, sizeof(accept_ret));
 }
 
@@ -196,10 +208,12 @@ void tcpdev_notify_accept(struct tcpcb_s *cb)
 
     accept_ret.type = TDT_ACCEPT;
     accept_ret.ret_value = 0;
-    accept_ret.sock = listencb->sock;	/* report back listen socket*/
-    //accept_ret.sock = listencb->newsock;	/* report back new socket*/
+    accept_ret.sock = listencb->sock;	/* report back listen socket, for wake_up */
+    accept_ret.newsock = listencb->newsock;	/* kernel stores addr into this sock */
     accept_ret.addr_ip = cb->remaddr;
     accept_ret.addr_port = htons(cb->remport);
+    accept_ret.locaddr = cb->localaddr;
+    accept_ret.locport = htons(cb->localport);
 
     debug_accept("tcpdev notify_accept: ACCEPT (SYN received before accept) sock[%p] newsock[%p]\n",
 						listencb->sock, listencb->newsock);
@@ -219,14 +233,16 @@ static void tcpdev_connect(void)
 
     n = tcpcb_find_by_sock(db->sock);
     if (!n || n->tcpcb.state != TS_CLOSED) {
-	debug_tcp("tcp: panic in connect\n");
+	debug_tcp("tcp: connect on socket w/no CB\n");
+	retval_to_sock(db->sock, -ECONNREFUSED);
 	return;
     }
 
-    /* convert localhost to local_ip*/
+    /* No longer remap 127.0.0.1 -> local_ip here; ip_route() now catches
+     * all 127.x.x.x destinations and loops them back internally. Keeping
+     * the real destination address is also required for correct ICMP echo
+     * replies (ping localhost). */
     addr = db->addr.sin_addr.s_addr;
-    if (addr == ntohl(INADDR_LOOPBACK))
-	addr = local_ip;
     n->tcpcb.remaddr = addr;
     n->tcpcb.remport = ntohs(db->addr.sin_port);
 
@@ -266,13 +282,14 @@ static void tcpdev_read(void)
 
     n = tcpcb_find_by_sock(sock);
     if (!n || n->tcpcb.state == TS_CLOSED) {
-	printf("ktcp: panic in read\n");
+	debug_tcp("tcp: read on socket w/no CB\n");
+	retval_to_sock(sock, -EPIPE);
 	return;
     }
 
     cb = &n->tcpcb;
     if (cb->state == TS_CLOSING || cb->state == TS_LAST_ACK || cb->state == TS_TIME_WAIT) {
-	printf("tcpdev_read: returning -EPIPE to socket read state %d\n", cb->state);
+	debug_tcp("tcp: read on socket w/invalid state %d\n", cb->state);
 	retval_to_sock(sock, -EPIPE);
 	return;
     }
@@ -282,7 +299,7 @@ static void tcpdev_read(void)
 
     if (data_avail == 0) {
 	if (cb->state == TS_CLOSE_WAIT) {
-	    printf("tcpdev_read: read on CLOSE_WAIT socket, return -EPIPE\n");
+	    debug_tcp("tcp: read on CLOSE_WAIT socket\n");
 	    retval_to_sock(sock, -EPIPE);
 	} else if (db->nonblock)
 	    retval_to_sock(sock, -EAGAIN);
@@ -295,6 +312,8 @@ static void tcpdev_read(void)
 
     data_avail = db->size < data_avail ? db->size : data_avail;
     cb->bytes_to_push -= data_avail;
+    /* inet_read() zeroes sock->avail_data, so remainder must be resent */
+    cb->bytes_notified = 0;
     if (cb->bytes_to_push <= 0)
 	tcpcb_need_push--;
 
@@ -319,6 +338,7 @@ static void tcpdev_read(void)
 	}
 	return;
     }
+
 #if 0
     /* send ACK to restart server should window have been full (unless it's netstat)*/
     if (cb->remport != NETCONF_PORT || cb->remaddr != 0)
@@ -327,21 +347,29 @@ static void tcpdev_read(void)
 		cb->rcv_nxt - cb->irs, data_avail);
 	    tcp_send_ack(cb);
 	}
-#else
+#endif
     /* Fix the 'zero window problem': if the previous ACK advertized a window smaller
      * than the MSS - AND the sender needs that size, the sender will stop until a
-     * larger window is advertized by the receiver (fast) or wait for a timeout, typically 2 or
-     * more seconds and then send a packet using the advertized size. If the window size was zero,
-     * that send-size will be 1 byte.
+     * larger window is advertized by the receiver (fast) or wait for a timeout, typically
+     * 2 or more seconds and then send a packet using the advertized size. If the window
+     * size was 0, that send-size will be 1 byte.
      * (MSS is MTU minus headers, MTU - 40).
+     *
+     * Skip this for the netconf TCB (remport=NETCONF_PORT, remaddr=0). This is a special
+     * pseudo-socket used only for packet capture (tcpdump) and network stats — it never
+     * carries real TCP data. Sending an extra ACK on it to 0.0.0.0:2 triggers a RST from
+     * QEMU slirp, which arrives back and removes the netconf TCB, disconnecting tcpdump.
+     * All normal TCBs (FTP, HTTP, telnet, etc.) have remaddr != 0 and are unaffected.
      */
-    if (CB_BUF_SPACE(cb) - data_avail <= MTU - 40) {
+    if ((cb->remport != NETCONF_PORT || cb->remaddr != 0) &&
+	CB_BUF_SPACE(cb) - data_avail <= MTU - 40) {
+
 	//printf("Extra ACK, size %d, space %d\n", data_avail, CB_BUF_SPACE(cb));
 	//printf("tcp: extra ACK seq %ld, last win %d this data %d\n",
 		//cb->rcv_nxt - cb->irs, CB_BUF_SPACE(cb)-data_avail, data_avail);
+
 	tcp_send_ack(cb);
     }
-#endif
 }
 
 /* kernel write data to ktcp (network)*/
@@ -368,24 +396,26 @@ static void tcpdev_write(void)
 
     n = tcpcb_find_by_sock(sock);
     if (!n || n->tcpcb.state == TS_CLOSED) {
-	printf("tcpdev_write: write to unknown socket\n");
+	debug_tcp("tcp: write on socket w/no CB\n");
 	retval_to_sock(sock, -EPIPE);
 	return;
     }
 
     cb = &n->tcpcb;
 
-    if (cb->state != TS_ESTABLISHED
-		/*&& cb->state != TS_CLOSE_WAIT*/) {	// No write data if in CLOSE_WAIT
-	/* FIXME: May want to delete the printf below, this is not uncommon */
-	printf("tcpdev_write: write to socket in improper state %d\n", cb->state);
+    /* Don't write data if not established (or CLOSE_WAIT) */
+    if (cb->state != TS_ESTABLISHED /*&& cb->state != TS_CLOSE_WAIT*/ ) {
+	debug_tcp("tcp: write on socket w/invalid state %d\n", cb->state);
 	retval_to_sock(sock, -EPIPE);
 	return;
     }
 
     if (cb->remport == NETCONF_PORT && cb->remaddr == 0) {
-	if (db->size == sizeof(struct stat_request_s)) {
+	/* netconf writes may be >= 2 bytes (stat_request_s header+optional extra data) */
+	if (db->size >= sizeof(struct stat_request_s)) {
 	    netconf_request((struct stat_request_s *)db->data);
+	    if (db->size > sizeof(struct stat_request_s))
+		netconf_set_extra(db->data, db->size);	/* parse ICMP echo target, etc. */
 	    netconf_send(cb);		/* queue response*/
 	    notify_data_avail(cb);	/* set sock->data_avail to allow inet_read()*/
 	}
@@ -445,6 +475,10 @@ static void tcpdev_release(void)
 	    case TS_SYN_RECEIVED:
 	    case TS_ESTABLISHED:
 		if (cb->remport == NETCONF_PORT && cb->remaddr == 0){
+			if (pending_icmp_cb == cb) {
+				pending_icmp_cb = NULL;
+				pending_is_traceroute = 0;
+			}
 			tcpcb_remove(n);
 			return;
 		}

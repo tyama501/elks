@@ -1,21 +1,12 @@
 #ifndef __LINUXMT_KERNEL_H
 #define __LINUXMT_KERNEL_H
 
-#include <linuxmt/types.h>
-#include <arch/cdefs.h>
-
-/*
- * 'kernel.h' contains some often-used function prototypes etc
- */
-
-#ifdef __KERNEL__
-
-#define INT_MAX		((int)(~0U>>1))
-#define UINT_MAX	(~0U)
-#define LONG_MAX	((long)(~0UL>>1))
-#define ULONG_MAX	(~0UL)
-
-#define structof(p,t,m) ((t *) ((char *) (p) - offsetof (t,m)))
+struct dmesg_queue {
+    unsigned int    len;        /* # chars in queue */
+    unsigned int    size;       /* queue size */
+    unsigned int    head;
+    unsigned char   base[];     /* queue data follows */
+};
 
 /* ordered arch_cpu values, used for feature selection */
 #define CPU_8088        0
@@ -27,10 +18,29 @@
 #define CPU_80286       6       /* first PC/AT */
 #define CPU_80386       7       /* 80386 or later, other CPUs not tested for */
 
+#ifdef __KERNEL__
+
+#include <linuxmt/types.h>
+#include <arch/cdefs.h>
+
+#define INT_MAX		((int)(~0U>>1))
+#define UINT_MAX	(~0U)
+#define LONG_MAX	((long)(~0UL>>1))
+#define ULONG_MAX	(~0UL)
+
+#define structof(p,t,m) ((t *) ((char *) (p) - offsetof (t,m)))
+
 extern unsigned char arch_cpu;
 extern char running_qemu;
 extern dev_t dev_console;
 extern int debug_level;
+
+extern seg_t dmesg_seg;         /* segment or selector of dmesg circular queue */
+
+extern seg_t kernel_cs, kernel_ds, kernel_ftext;
+extern short *_endtext, *_endftext, *_enddata, *_endbss;
+extern short endistack[], istack[];
+extern unsigned int heapsize;
 
 extern void do_exit(int) noreturn;
 
@@ -60,6 +70,6 @@ extern int sys_execve(const char *,char *,size_t);
 
 #define suser() (current->euid == 0)
 
-#endif
+#endif /* __KERNEL__ */
 
 #endif

@@ -9,6 +9,7 @@
 //  1 Feb 2026 Rewritten completely in assembly
 //
 #include <linuxmt/config.h>
+#include <arch/segment.h>
         .code16
         .text
 #ifdef CONFIG_ARCH_IBMPC
@@ -55,7 +56,12 @@ common_entry:
         // Recover kernel data segment
         // Was pushed by the CALLF of the dynamic handler
         mov     %sp,%bx
+#ifdef CONFIG_286_PMODE
+        mov     $SEL_KDATA, %ax         // writable; CALLF-saved CS is read-only SEL_KDATA_EXEC
+        mov     %ax, %ds
+#else
         mov     %ss:12(%bx),%ds
+#endif
 
         // translated C routine above
         // NOTE: uses hard-coded offsets from struct serial_info, tty and ch_queue
@@ -64,6 +70,11 @@ common_entry:
         mov     %cx,%bx                 // bx = sp = &ports[n]
         mov     (%bx),%si               // si = q = &sp->tty->inq
         mov     0x4(%bx),%dx            // dx = sp->io + UART_RX
+        add     $5,%dx                  // dx = sp->io + UART_LSR
+        in      (%dx),%al
+        sub     $5,%dx                  // dx = sp->io + UART_RX
+        test    $1,%al                  // data ready? QEMU may interrupt w/no data:
+        jz      4f                      // reading empty RX would queue a NUL as input
 0:      in      (%dx),%al               // do {
         mov     %al,%dl                 // dl = c = INB(sp->io+UART_RX)
         mov     (%si),%ax               // ax = q->len

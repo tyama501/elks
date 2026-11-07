@@ -46,6 +46,7 @@
 #include <linuxmt/debug.h>
 #include <linuxmt/memory.h>
 #include <arch/segment.h>
+#include <arch/seg286.h>
 #pragma GCC diagnostic ignored "-Wunused-label"
 
 /* for relocation debugging change to printk */
@@ -85,7 +86,7 @@ int sys_execve(const char *filename, char *sptr, size_t slen)
 
     /* Read the header */
     ds = current->t_regs.ds;
-    current->t_regs.ds = kernel_ds;
+    current->t_regs.ds = KERNEL_DS;
     retval = filp->f_op->read(inode, filp, (char *)&magic, sizeof(magic));
     current->t_regs.ds = ds;
     if (retval != sizeof(magic)) goto error_exec2_5;
@@ -146,7 +147,7 @@ static int FARPROC relocate(seg_t place_base, unsigned long rsize, segment_s *se
 
     if ((int)rsize % sizeof(struct minix_reloc))
         return -EINVAL;
-    current->t_regs.ds = kernel_ds;
+    current->t_regs.ds = KERNEL_DS;
     debug_reloc("EXEC: applying %04lx bytes of relocations to segment %x\n",
            (unsigned long)rsize, place_base);
     while (rsize >= sizeof(struct minix_reloc)) {
@@ -207,7 +208,7 @@ static int FARPROC execve_aout(struct inode *inode, struct file *filp,
 #endif
 
     /* (Re)read the header */
-    current->t_regs.ds = kernel_ds;
+    current->t_regs.ds = KERNEL_DS;
     filp->f_pos = 0;
     retval = filp->f_op->read(inode, filp, (char *) &mh, sizeof(mh));
 
@@ -385,6 +386,10 @@ static int FARPROC execve_aout(struct inode *inode, struct file *filp,
             paras, bytes);
         seg_code = seg_alloc(paras, SEG_FLAG_CSEG);
         if (!seg_code) goto error_exec3;
+#ifdef CONFIG_286_PMODE
+        /* text seg is a code selector (not writable in PM); make it writable to load */
+        desc_chaccess(seg_code->base, DESC_KDATA);
+#endif
         currentp->t_regs.ds = seg_code->base;
         retval = filp->f_op->read(inode, filp, 0, bytes);
         if (retval != bytes) {
@@ -497,6 +502,10 @@ static int FARPROC execve_aout(struct inode *inode, struct file *filp,
     currentp->t_begstack = (currentp->t_endseg - slen) & ~1; /* force even SP and argv */
     fmemcpyb((char *)currentp->t_begstack, seg_data->base, sptr, ds, slen);
 
+#ifdef CONFIG_286_PMODE
+    /* text fully loaded; restore executable access so seg_code can be used as CS */
+    desc_chaccess(seg_code->base, DESC_KCODE);
+#endif
     finalize_exec(inode, seg_code, seg_data, (word_t)mh.entry, 0);
     return 0;           /* success */
 
@@ -522,8 +531,10 @@ static void FARPROC finalize_exec(struct inode *inode, segment_s *seg_code,
 
     /* From this point, the old code and data segments are not needed anymore */
     for (i = 0; i < MAX_SEGS; i++) {
-        if (currentp->mm[i])
+        if (currentp->mm[i]) {
             seg_put(currentp->mm[i]);
+            currentp->mm[i] = 0;
+        }
     }
 
 #ifdef CONFIG_EXEC_OS2
@@ -583,9 +594,7 @@ static void FARPROC finalize_exec(struct inode *inode, segment_s *seg_code,
     if (inode->i_mode & S_ISGID)
         currentp->egid = inode->i_gid;
 
-#if UNUSED      /* used only for vfork()*/
-    wake_up(&currentp->p_parent->child_wait);
-#endif
+    wake_up(&currentp->p_parent->child_wait);   /* wake up any vfork parent */
 
     /*
      * Arrange for our return from sys_execve onto the new
@@ -612,7 +621,7 @@ static int FARPROC execve_os2(struct inode *inode, struct file *filp,
     static struct ne_reloc reloc;
 
     /* read MZ header, then OS/2 header */
-    current->t_regs.ds = kernel_ds;
+    current->t_regs.ds = KERNEL_DS;
     filp->f_pos = 0;
     retval = filp->f_op->read(inode, filp, (char *)&doshdr, sizeof(doshdr));
     if (retval != sizeof(doshdr)) goto errout;
@@ -712,7 +721,7 @@ static int FARPROC execve_os2(struct inode *inode, struct file *filp,
         retval = filp->f_op->read(inode, filp, 0, segp->size);
         if (retval != segp->size) goto errout2;
 
-        current->t_regs.ds = kernel_ds;
+        current->t_regs.ds = KERNEL_DS;
         if (segp->flags & NESEG_RELOCINFO) {
             retval = filp->f_op->read(inode, filp, (char *)&reloc_num, sizeof(reloc_num));
             if (retval != sizeof(reloc_num)) goto errout2;

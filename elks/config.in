@@ -19,6 +19,7 @@ mainmenu_option next_comment
 
 		bool 'Compaq DeskPro Hardware (fast mode)' CONFIG_HW_COMPAQFAST n
 		bool 'MK-88 Hardware (IRQ 3 keyboard)' CONFIG_HW_MK88 n
+		bool 'i286 protected mode (experimental)' CONFIG_286_PMODE n
 
 		comment 'Devices'
 
@@ -68,6 +69,9 @@ mainmenu_option next_comment
 
 	bool 'Boot options in /bootopts'          CONFIG_BOOTOPTS     y
 	bool 'Use Async I/O in kernel'            CONFIG_ASYNCIO      n
+	if [ "$CONFIG_ARCH_IBMPC" = "y" ]; then
+	    bool 'Audio support in kernel'        CONFIG_AUDIO        n
+	fi
 	bool 'Calculate process CPU usage'        CONFIG_CPU_USAGE    y
 	bool 'Real time clock in localtime'       CONFIG_TIME_RTC_LOCALTIME n
 	string 'Compiled-in TZ= timezone string'  CONFIG_TIME_TZ      ''

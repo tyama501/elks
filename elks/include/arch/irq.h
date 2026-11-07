@@ -25,7 +25,7 @@ int free_irq(int irq);
 
 /* irqtab.S */
 void _irqit (void);
-void int_vector_set (int vect, word_t proc, word_t seg);
+void int_vector_set(unsigned int vect, word_t proc, seg_t seg);
 void idle_halt(void);
 
 void div0_handler(int irq, struct pt_regs *regs);
@@ -49,9 +49,14 @@ enum {
 };
 extern unsigned int bh_active;
 extern void (*bh_base[MAX_SOFTIRQ])(void);
-#define init_bh(nr, routine)    { bh_base[nr] = routine; }
-#define mark_bh(nr)             { bh_active |= 1 << (nr);  }
 void do_bottom_half(void);
+#define init_bh(nr, routine)    { bh_base[nr] = routine; }
+#define mark_bh(nr)             \
+    {                           \
+        clr_irq();              \
+        bh_active |= 1 << (nr); \
+        set_irq();              \
+    }
 
 #endif /* __ASSEMBLER__ */
 #endif /* __KERNEL__ */
@@ -132,6 +137,29 @@ void do_bottom_half(void);
             : /* no output */   \
             :"Ral" ((unsigned char) (1 << (i))) \
             :"memory")
+#endif
+
+#ifdef __WATCOMC__
+int clr_irq(void);
+#pragma aux clr_irq =           \
+    "cli";
+
+int set_irq(void);
+#pragma aux set_irq =           \
+    "sti";
+
+#define save_flags(x)           save_flags_addr(&x)
+int save_flags_addr(void *addr);
+#pragma aux save_flags_addr parm[bx] =  \
+    "pushf",                            \
+    "pop ax",                           \
+    "mov ax,[bx]";
+
+int restore_flags(unsigned int flags);
+#pragma aux restore_flags parm[ax] =    \
+    "push ax",                          \
+    "popf";
+
 #endif
 
 #endif

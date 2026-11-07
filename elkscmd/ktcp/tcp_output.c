@@ -474,10 +474,14 @@ void tcp_output(struct tcpcb_s *cb)
     header_len = sizeof(tcphdr_t);
     if (cb->flags & TF_SYN) {
 	__u8 *options = th->options;
+	unsigned int mss = MTU - 40;
 
+	/* advertise segment we can actually accept */
+	if (cb->buf_size && mss > cb->buf_size)
+	    mss = cb->buf_size;
 	options[0] = TCP_OPT_MSS;
 	options[1] = TCP_OPT_MSS_LEN;		/* total options length (4)*/
-	*(__u16 *)(options + 2) = htons(MTU - 40);
+	*(__u16 *)(options + 2) = htons(mss);
 	header_len += TCP_OPT_MSS_LEN;
     }
 

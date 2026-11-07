@@ -1,13 +1,21 @@
 ## /bootopts 1023 max
 #TZ=MDT6
-#LOCALIP=10.0.2.16
-#HOSTNAME=elks16
+#setting LOCALIP= disables DHCP, can use /etc/hosts names
+#LOCALIP=10.0.2.15
+#GATEWAY=10.0.2.2
+#NETMASK=255.255.255.0
 #ne0=12,0x300,,0x80
+#ne0=off
 #wd0=10,0x300,0xCC00,0x80
 #3c0=11,0x330,,0x80
+#le0=9,0x340,,0x80
+#sb=5,0x220,1
+#net=ne0
 #comirq=,,7,10
 #umb=0xC000:0x800,0xD000:0x1000
+dmesg=1
 hma=kernel
+#xms=off
 #xms=on
 #xms=int15
 #xmsbuf=0
@@ -20,16 +28,17 @@ hma=kernel
 #root=cfa1
 #root=hda1 ro
 #root=df0
+#enable=df0
+#disable=fd0
 #task=16 buf=64 cache=8 file=64 inode=96 heap=44000 # std
-#task=6 buf=8 cache=4 file=20 inode=24 heap=15000 n # min
+#task=6 buf=8 cache=4 file=20 inode=24 heap=15000 # min
 #sync=30
 #3	# multiuser serial
 #n	# no rc.sys
-#init=/bin/sash
+#init=/bin/sh
 #kstack
 #strace
 #FTRACE=1
-#net=ne0
 #debug=1
 #istack
 #console=ttyS0,19200 3

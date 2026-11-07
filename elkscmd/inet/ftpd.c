@@ -34,8 +34,6 @@
 #define		FALSE		0
 #define		FTP_PORT	21
 #define		MAXARGS 256     /* max names in wildcard expansion */
-#define		PASV_PORT	49821U	/* 'random' port for passive connections */
-#define		QEMU_PORT	8041U	/* outside port for QEMU */
 
 #ifndef MAXPATHLEN
 #define		MAXPATHLEN	256
@@ -55,6 +53,7 @@ enum {
 	CMD_REIN,
 	CMD_PORT,
 	CMD_PASV,
+	CMD_EPSV,
 	CMD_TYPE,
 	CMD_STRU,
 	CMD_MODE,
@@ -96,6 +95,7 @@ struct cmd_tab cmdtab[] = {
 	{"SYST", CMD_SYST},
 	{"QUIT", CMD_QUIT},
 	{"PASV", CMD_PASV},
+	{"EPSV", CMD_EPSV},
 	{"PORT", CMD_PORT},
 	{"TYPE", CMD_TYPE},
 	{"DELE", CMD_DELE},
@@ -110,12 +110,14 @@ struct cmd_tab cmdtab[] = {
 };
 
 static int debug = 0;
-static int qemu = 0;
 static int nofork = 0;
+static char *pasv_ip = NULL;
+static unsigned long slirp_gw;	/* SLIRP gateway (peer) IP, network order; 0 = 10.0.2.2 */
 static int timeout = 900;
 static int maxtimeout = 7200;
 static int controlfd;
-static char real_ip[20];
+static unsigned int pasv_min_port = 0;
+static unsigned int pasv_max_port = 0;
 
 int do_nlist(int, char *);
 
@@ -232,9 +234,6 @@ int do_active(char *client_ip, unsigned int client_port, unsigned int server_por
 	/* initiate data connection fd with client ip and client port             */
 	bzero(&cliaddr, sizeof(cliaddr));
 
-	if (qemu) ip = real_ip;		/* for QEMU hack, use this IP instead of 
-					 * the one sent by the client. */
-	//printf("DEBUG: connect to (real) %s/%u\n", ip, client_port);
 	cliaddr.sin_family = AF_INET;
 	cliaddr.sin_port = htons(client_port);
 	cliaddr.sin_addr.s_addr = in_aton(ip);
@@ -281,22 +280,50 @@ int get_command(char *cmdline) {
 /* as supplement. */
 
 int do_login() {
+	struct passwd *pwd;
 	char buf[200];
+	char salt[3];
 
 	if (read(controlfd, buf, 200) < 0)
 		return -1;
 	clean(buf);
-	if (strncmp(buf, "USER", 4)) 
+
+	if (strlen(buf) < 6)
+		return -1;
+
+	pwd = getpwnam(buf + 5); // buf + 5 removes 'USER '
+
+	if (pwd == NULL)
 		return -1;
 	send_reply(331, "User OK");
 
 	if (read(controlfd, buf, 200) < 0)
 		return -1;
-	if (strncmp(buf, "PASS", 4)) 
+	clean(buf);
+
+	if (pwd->pw_passwd[0] == 0) {
+	} else if (pwd->pw_passwd[1] != 0) {
+		salt[0] = pwd->pw_passwd[0];
+		salt[1] = pwd->pw_passwd[1];
+		salt[2] = 0;
+		if (strlen(buf) < 6)
+			return -1;
+		if (strcmp(crypt(buf + 5, salt), pwd->pw_passwd)) // buf + 5 removes 'PASS '
+			return -1;
+	} else
 		return -1;
-	chdir("/root");		/* brute force ... */
+
+	if (setgid(pwd->pw_gid) < 0)
+		return -1;
+
+	if (setuid(pwd->pw_uid) < 0)
+		return -1;
+
+	if (chdir(pwd->pw_dir) < 0)
+		chdir("/");
+
 	send_reply(230, "Password OK");
-	return 0; /* always OK */
+	return 0;
 }
 
 /* session timeout, close connection */
@@ -310,7 +337,7 @@ void sigalrm(int sig)
 void sigchild(int sig)
 {
 	signal(SIGCHLD, sigchild);
-	while (waitpid(-1, NULL, WNOHANG) > 0)
+	while ((int)waitpid(-1, NULL, WNOHANG) > 0)
 		continue;
 }
 
@@ -320,63 +347,165 @@ int checknum(char *s) {
 	return 1;
 }
 
-/*
- * Two quite different functions: LIST (DIR command) which returns a ls -l output
- * and NLST (nlist) which returns filenames with paths if approriate. In the first case
- * the shell will do wildcard processing, in the latter, we have to do it (if GLOB is defined).
- * In both cases we should check for some existence, so as to not return an empty list (no
- * message) which will look like an error 'wtf happened?') to the user at the other end.
+/* Append a UNIX 'ls -l' style entry line to out, which already holds a "dir/"
+ * prefix of length len. Returns the new total length (prefix + entry line), or
+ * the unchanged len if the line would not fit in size.
+ * Keeps code and data small for the restricted ELKS environment.
  */
-int do_list(int datafd, char *input) {
-	char cmd_buf[CMDBUFSIZ], iobuf[IOBUFSIZ];
-   	FILE *in;
-	int len, nlst = 0, status = 0;
+static int format_list_entry(char *out, int len, int size, const char *name,
+		struct stat *sb)
+{
+	char mode[11];
+	char *p = out + len;
+	char *t;
 
-	bzero(iobuf, sizeof(iobuf));
+	/* Bound the sprintf() below so it cannot overrun the size-byte output
+	 * buffer. 'len' is the caller's "dir/" prefix, which can itself be
+	 * hundreds of bytes, while name is at most MAXNAMLEN (26) since d_name[]
+	 * is fixed at MAXNAMLEN+1. The 72 is the worst-case width of the fixed
+	 * fields appended after the prefix: mode[10] plus three "%3d" columns,
+	 * one "%8lu" size, a 12-byte date (Mmm dd hh:mm) and separating spaces
+	 * and CRLF. Checked here rather than only in the caller because
+	 * format_list_entry is the single choke point shared by the directory,
+	 * single-file and GLOB paths. */
+	if (len + 72 + (int)strlen(name) >= size)
+		return len;
 
-	if (strncmp(input, "NLST", 4) == 0)
-		nlst++;
-	if (get_param(input, iobuf) > 0)
-		trim(iobuf);
-	else
-		*iobuf = '.';	
+	t = ctime(&sb->st_mtime);
+	/* ctime format: "Www Mmm dd hh:mm:ss yyyy\n" */
 
-	if (nlst) {
-		if (debug) printf("NLST <%s>\n", iobuf);
-		status = do_nlist(datafd, iobuf);
-	} else {
-		/* LIST - pipe output from ls-command back to the client */
-		/*        let /bin/sh do the error reporting */
+	/* ELKS libc has no name lookup here; use numeric uid/gid like a minimal
+	 * ls. Column layout matches a typical 'ls -l' listing. */
+	strcpy(mode, "----------");
+	/* First char is the file type; unknown/socket types fall through to
+	 * 's'/'?' rather than being omitted, matching 'ls -l'. */
+	mode[0] = '?';
+	if (S_ISDIR(sb->st_mode))  mode[0] = 'd';
+	else if (S_ISCHR(sb->st_mode)) mode[0] = 'c';
+	else if (S_ISBLK(sb->st_mode)) mode[0] = 'b';
+	else if (S_ISFIFO(sb->st_mode)) mode[0] = 'p';
+	else if (S_ISLNK(sb->st_mode)) mode[0] = 'l';
+	else if (S_ISSOCK(sb->st_mode)) mode[0] = 's';
+	if (sb->st_mode & S_IRUSR) mode[1] = 'r';
+	if (sb->st_mode & S_IWUSR) mode[2] = 'w';
+	if (sb->st_mode & S_IXUSR) mode[3] = 'x';
+	if (sb->st_mode & S_IRGRP) mode[4] = 'r';
+	if (sb->st_mode & S_IWGRP) mode[5] = 'w';
+	if (sb->st_mode & S_IXGRP) mode[6] = 'x';
+	if (sb->st_mode & S_IROTH) mode[7] = 'r';
+	if (sb->st_mode & S_IWOTH) mode[8] = 'w';
+	if (sb->st_mode & S_IXOTH) mode[9] = 'x';
 
-		sprintf(cmd_buf, "/bin/ls -l %s 2>&1", iobuf);
+	sprintf(p, "%s %3d %3d %3d %8lu %.12s %s\r\n", mode, 1, sb->st_uid,
+		sb->st_gid, (unsigned long)sb->st_size, t ? t + 4 : "             ", name);
+	return len + strlen(p);
+}
 
-#ifdef LET_LS_DO_THIS	/* wildcards are OK, so we either let the shell do the processing */
-			/* or we do full wildcard processing here */
-		if (access(iobuf, F_OK)) {
-			send_reply1(550, "No such file or directory", iobuf);
-    			return -1;
-    		} 
-#endif
-		if (!(in = popen(cmd_buf, "r"))) {
-			send_reply(451, "Requested action aborted. Local error in processing");
-        		return -1;
+/*
+ * LIST (DIR) processing: send a UNIX 'ls -l' style listing for a file, directory
+ * or (with GLOB) a wildcard match list. This enumerates with opendir/readdir/stat
+ * directly instead of forking /bin/sh + /bin/ls, which fails on memory/task-slot
+ * constrained systems such as under a nano-X nxterm session.
+ */
+static int do_list(int datafd, char *input) {
+	struct stat sb;
+	int status = 0;
+
+	if (get_param(input, input) <= 0)
+		*input = '\0';
+
+#ifdef GLOB
+	{
+		char *myargv[MAXARGS];
+		int count, i;
+
+		count = expandwildcards(input, MAXARGS, myargv);
+		if (count < 0) {
+			send_reply1(550, "No such file or directory", input);
+			close(datafd);
+			return -1;
 		}
-		//printf("LIST: command is '%s'\n", cmd_buf);
-		send_reply(150,"Opening ASCII mode data connection for /bin/ls");
+		if (count > 0) {	/* wildcard matches, already sorted */
+			send_reply(150, "Opening ASCII mode data connection for file list");
+			for (i = 0; i < count; i++) {
+				if (stat(myargv[i], &sb) == 0) {
+					int len = format_list_entry(input, 0,
+						CMDBUFSIZ, myargv[i], &sb);
+					if (len > 0 &&
+					    write(datafd, input, len) != len) {
+						perror("LIST: Data socket write");
+						status = -1;
+						break;
+					}
+				}
+			}
+			freewildcards();
+			close(datafd);
+			return status;
+		}
+		freewildcards();
+	}
+#endif
 
-		bzero(iobuf, sizeof(iobuf));
-		while (fgets(iobuf, IOBUFSIZ-2, in) != NULL) {
-			len = strlen(iobuf);
-			iobuf[len-1] = '\r';    /* Change to FTP ASCII-style line endings */
-			iobuf[len++] = '\n';
-			if (write(datafd, iobuf, len) != len) {
+	if (*input == '\0')
+		strcpy(input, ".");
+
+	if (stat(input, &sb) < 0) {
+		send_reply1(550, "No such file or directory", input);
+		close(datafd);
+		return -1;
+	}
+
+	send_reply(150, "Opening ASCII mode data connection for file list");
+
+	if (S_ISDIR(sb.st_mode)) {
+		DIR *dir = opendir(input);
+		struct dirent *dp;
+		int plen;
+		char path[CMDBUFSIZ];
+
+		if (dir == NULL) {
+			send_reply1(550, "Cannot open directory", input);
+			close(datafd);
+			return -1;
+		}
+		/* Build "<dir>/" once in path[] for stat()ing each entry; the entry
+		 * line itself holds only the basename in the name column, matching
+		 * 'ls -l' which does not prefix lines with the directory. */
+		plen = strlen(input);
+		strcpy(path, input);
+		if (path[plen-1] != '/')
+			path[plen++] = '/';
+		path[plen] = '\0';
+		while ((dp = readdir(dir)) != NULL) {
+			int len;
+
+			if (dp->d_name[0] == '.')	/* hide dotfiles, matches ls default */
+				continue;
+			if (plen + strlen(dp->d_name) + 60 >= CMDBUFSIZ)
+				continue;
+			strcpy(path + plen, dp->d_name);
+			if (stat(path, &sb) < 0)
+				continue;
+			len = format_list_entry(input, 0, CMDBUFSIZ,
+				dp->d_name, &sb);
+			if (len > 0 && write(datafd, input, len) != len) {
 				perror("LIST: Data socket write");
 				status = -1;
 				break;
 			}
-			bzero(iobuf, sizeof(iobuf));
 		}
-		pclose(in);
+		closedir(dir);
+	} else {
+		char name[CMDBUFSIZ];
+		int len;
+
+		strcpy(name, input);	/* input is reused as the output buffer */
+		len = format_list_entry(input, 0, CMDBUFSIZ, name, &sb);
+		if (len > 0 && write(datafd, input, len) != len) {
+			perror("LIST: Data socket write");
+			status = -1;
+		}
 	}
 	close(datafd);
 
@@ -483,7 +612,7 @@ int do_nlist(int dfd, char *iobuf)
 }
 
 /* Passive mode: Server listens for incoming data connection */
-int do_pasv(int *datafd) {
+int do_pasv(int *datafd, int epsv) {
 	int fd;
 	unsigned int i = 1, port = 0;
 	struct sockaddr_in pasv;
@@ -495,20 +624,25 @@ int do_pasv(int *datafd) {
 		perror("PASV socket");
 		return -1;
 	}
-
 	if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &i, sizeof(i)) < 0)
 		perror("PASV SO_REUSEADDR");
-	i = SO_LISTEN_BUFSIZ;
-	if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &i, sizeof(i)) < 0)
-                perror("PASV SO_RCVBUF");
+	if (setsockopt(fd, SOL_SOCKET, SO_NOBUFFER, NULL, 0) < 0)
+		perror("PASV SO_NOBUFFER");
+#if 1
+    /* test using 2/3 of normal 4390 byte buffer (=MTU-40 = 1460*2) */
+    int size = 2920;
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size)) < 0)
+		perror("SO_RCVBUF");
+#endif
 
 	pasv.sin_family = AF_INET;
 	pasv.sin_addr.s_addr = htonl(INADDR_ANY);
-	if (qemu) port = PASV_PORT;	// Force predictable port #
+	if (pasv_min_port) port = pasv_min_port;
 	pasv.sin_port = htons(port);
 	i = 0;
 	while (bind(fd, (struct sockaddr *)&pasv, sizeof(pasv)) < 0) {
-		if (debug) printf("PASV bind failed: host %s port %u\n", in_ntoa(pasv.sin_addr.s_addr), ntohs(pasv.sin_port));
+		if (debug) printf("PASV bind failed: host %s port %u\n",
+			in_ntoa(pasv.sin_addr.s_addr), ntohs(pasv.sin_port));
 		perror("PASV bind");
 		if (i++ > 10 || errno != EADDRINUSE) {
 			if (debug) printf("Bind: Could not connect on port %u\n", port);
@@ -517,8 +651,7 @@ int do_pasv(int *datafd) {
 			return -1;
 		} 
 		port++;
-		if (qemu) 
-			if (port >= (PASV_PORT + 9)) port = PASV_PORT;
+		if (pasv_max_port && port > pasv_max_port) port = pasv_min_port;
     		pasv.sin_port = htons(port);
 	}
 	i = sizeof(pasv);
@@ -533,21 +666,31 @@ int do_pasv(int *datafd) {
 		return -1;
 	}
 
-	a = (char *) &pasv.sin_addr;
-	p = (char *) &pasv.sin_port;
-	sprintf(str, "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)\r\n", UC(a[0]),
-		UC(a[1]), UC(a[2]), UC(a[3]), UC(p[0]), UC(p[1]));
-
-	if (qemu) {
-		unsigned int qport = QEMU_PORT + port - PASV_PORT;
-		sprintf(str, "227 Entering Passive Mode (127,0,0,1,%u,%u)\r\n",
-			htons(qport)&0xff, htons(qport)>>8);
+	if (epsv) {
+		sprintf(str, "229 Entering Extended Passive Mode (|||%u|)\r\n",
+			(unsigned) ntohs(pasv.sin_port));
+	} else {
+		struct sockaddr_in local;
+		unsigned int len = sizeof(local);
+		if (getsockname(controlfd, (struct sockaddr *)&local, &len) == 0)
+			pasv.sin_addr.s_addr = local.sin_addr.s_addr;
+		if (pasv_ip)
+			pasv.sin_addr.s_addr = in_aton(pasv_ip);
+		else {
+			struct sockaddr_in peer;
+			len = sizeof(peer);
+			if (getpeername(controlfd, (struct sockaddr *)&peer, &len) == 0
+			    && peer.sin_addr.s_addr == (slirp_gw ? slirp_gw : htonl(0x0a000202)))
+				pasv.sin_addr.s_addr = htonl(0x7f000001);
+		}
+		a = (char *) &pasv.sin_addr;
+		p = (char *) &pasv.sin_port;
+		sprintf(str, "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)\r\n", UC(a[0]),
+			UC(a[1]), UC(a[2]), UC(a[3]), UC(p[0]), UC(p[1]));
 	}
     	write(controlfd, str, strlen(str));
 	if (debug) printf("%s", str);
 	i = sizeof(pasv);
-	//FIXME: The accept() will block forever - this will happen in QEMU if an external client
-	// requests a passive mode connection.
 	if ((*datafd = accept(fd, (struct sockaddr *)&pasv, (unsigned int *)&i)) < 0 ) {
 		perror("accept");
 		close(fd);
@@ -637,7 +780,7 @@ int do_stor(int datafd, char *input) {
 }
 
 void usage() {
-	printf("Usage: ftpd [-d] [-D] [-q] [<listen-port>]\n");
+	printf("Usage: ftpd [-d] [-D] [-n ip] [-N slirp-gateway] [-P min:max] [<listen-port>]\n");
 	exit(1);
 }
 
@@ -646,9 +789,8 @@ int main(int argc, char **argv) {
 	int listenfd, fd, ret;
 	pid_t pid;
 	unsigned int myport = FTP_PORT;
-	struct sockaddr_in servaddr, myaddr;
+	struct sockaddr_in servaddr;
 	struct sockaddr_in client;
-	char *cp;
 
 	while (--argc) {
 		argv++;
@@ -657,19 +799,29 @@ int main(int argc, char **argv) {
 				debug++;
 			else if (argv[0][1] == 'D') 
 				nofork++;
-			else if (argv[0][1] == 'q') {
-				qemu++;
+			else if (argv[0][1] == 'P') {
+				argc--; argv++;
+				char *colon = strchr(argv[0], ':');
+				if (colon) {
+					pasv_min_port = atoi(argv[0]);
+					pasv_max_port = atoi(colon + 1);
+				} else {
+					pasv_min_port = atoi(argv[0]);
+					pasv_max_port = pasv_min_port;
+				}
+			} else if (argv[0][1] == 'n') {
+				argc--; argv++;
+				pasv_ip = argv[0];
+			} else if (argv[0][1] == 'N') {
+				argc--; argv++;
+				slirp_gw = in_aton(argv[0]);
 			} else
 				usage();
 		} else {
 			myport = atoi(argv[0]);
-			break;	/* ignore rest of command line if any */
+			break;
 		}
 	}
-	if ((cp = getenv("QEMU")) != NULL) 
-		qemu = atoi(cp);
-	if (qemu && debug)
-		printf("QEMU mode\n");
 
 	if ((listenfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
 		perror("ftpd");
@@ -682,9 +834,8 @@ int main(int argc, char **argv) {
 		perror("SO_REUSEADDR");
 
 	/* set small listen buffer to save ktcp memory */
-	ret = SO_LISTEN_BUFSIZ;
-	if (setsockopt(listenfd, SOL_SOCKET, SO_RCVBUF, &ret, sizeof(int)) < 0)
-		perror("SO_RCVBUF");
+	if (setsockopt(listenfd, SOL_SOCKET, SO_NOBUFFER, NULL, 0) < 0)
+		perror("SO_NOBUFFER");
 
 	servaddr.sin_family      = AF_INET;
 	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -698,9 +849,6 @@ int main(int argc, char **argv) {
 		perror("listen");
 		exit(3);
 	}
-	ret = sizeof(myaddr);	/* save my own address for later use */
-	if (getsockname(listenfd, (struct sockaddr *) &myaddr, (unsigned int *)&ret) < 0)
-		perror("getsockname");
 
 	if (!nofork) {
 		/* become daemon, debug output on 1 and 2*/
@@ -751,15 +899,14 @@ int main(int argc, char **argv) {
 			close(listenfd);
 			signal(SIGCHLD, SIG_DFL);
 
-			strncpy(real_ip, in_ntoa(client.sin_addr.s_addr), 20); // Save for QEMU hack
-			/* Turn off qemu mode if we're talking to ourselves (loopback) */
-			if (qemu && (myaddr.sin_addr.s_addr == client.sin_addr.s_addr)) {
-				if (debug) printf("Loopback detected, disabling qemu mode.\n");
-				qemu = 0; 
+			if (debug) {
+				struct sockaddr_in local;
+				unsigned int len = sizeof(local);
+				getsockname(controlfd, (struct sockaddr *)&local, &len);
+				printf("local: %s, remote: %s\n", 
+					in_ntoa(local.sin_addr.s_addr),
+					in_ntoa(client.sin_addr.s_addr));
 			}
-			if (debug)
-				printf("local: %s, remote: %s, QEMU: %d\n", 
-					in_ntoa(myaddr.sin_addr.s_addr), real_ip, qemu);
 
 			send_reply(220, "Welcome - ELKS FTP server speaking");
 
@@ -806,8 +953,20 @@ int main(int argc, char **argv) {
 						close(datafd);
 						datafd = -1;
 					}
-					if (do_pasv(&datafd) < 0) {
+					if (do_pasv(&datafd, 0) < 0) {
 						send_reply(502, "PASV: Cannot open server socket");
+						close(datafd);
+						datafd = -1;
+					}
+					break;
+
+				case CMD_EPSV: /* Enter Extended Passive mode (RFC 2428) */
+					if (datafd >= 0) { /* connection already open, close it! */
+						close(datafd);
+						datafd = -1;
+					}
+					if (do_pasv(&datafd, 1) < 0) {
+						send_reply(502, "EPSV: Cannot open server socket");
 						close(datafd);
 						datafd = -1;
 					}
@@ -946,15 +1105,6 @@ int main(int argc, char **argv) {
 					if (!strncasecmp(namebuf, "DEBU", 4)) {
 						debug++;
 						send_reply(200, "Debug level increased");
-						break;
-					}
-					if (!strncasecmp(namebuf, "QEMU", 4)) {
-						qemu++;
-						qemu &= 1;
-						if (qemu) 
-							send_reply(200, "QEMU mode now active");
-						else 
-							send_reply(200, "QEMU mode deactivated");
 						break;
 					}
 					if (strncasecmp(namebuf, "IDLE", 4)) {

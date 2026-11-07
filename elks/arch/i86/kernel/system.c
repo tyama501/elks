@@ -68,10 +68,17 @@ unsigned int INITPROC setup_arch(void)
 
     arch_cpu = SETUP_CPU_TYPE;
 #ifdef SYS_CAPS
-    sys_caps = SYS_CAPS;    /* custom system capabilities */
+    sys_caps = SYS_CAPS;                /* custom system capabilities */
 #else
     if (arch_cpu >= CPU_80286)          /* 80286+ IBM PC/AT capabilities or Unknown CPU */
         sys_caps = CAP_ALL;
+#ifdef CONFIG_ARCH_IBMPC
+    else {
+        unsigned char __far *machine_type = _MK_FP(0xF000, 0xFFFE);
+        if (*machine_type == 0xFC)      /* model AT */
+            sys_caps |= CAP_KBD_LEDS;
+    }
+#endif
     debug("arch %d sys_caps %02x\n", arch_cpu, sys_caps);
 #endif
 
