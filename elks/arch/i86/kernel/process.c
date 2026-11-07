@@ -1,12 +1,12 @@
 #include <linuxmt/config.h>
 #include <linuxmt/debug.h>
 #include <linuxmt/kernel.h>
+#include <linuxmt/segment.h>
 #include <linuxmt/mm.h>
 #include <linuxmt/string.h>
 #include <linuxmt/sched.h>
 #include <linuxmt/signal.h>
 #include <linuxmt/types.h>
-#include <linuxmt/memory.h>
 #include <linuxmt/init.h>
 
 #include <arch/segment.h>
@@ -55,7 +55,7 @@ void INITPROC kfork_proc(void (*addr)())
     t = find_empty_process();
 
     /* t_regs values are nonexistent for idle task or handlers interrupting idle task */
-    t->t_regs.ds = t->t_regs.es = t->t_regs.ss = kernel_ds;
+    t->t_regs.ds = t->t_regs.es = t->t_regs.ss = KERNEL_DS;
     arch_build_stack(t, addr);
 }
 
@@ -104,11 +104,16 @@ void arch_setup_user_stack (register struct task_struct * t, word_t entry, seg_t
  * as we don't have any way of sorting out a return value yet.
  */
 
-void arch_setup_sighandler_stack(register struct task_struct *t,
+int arch_setup_sighandler_stack(register struct task_struct *t,
                                  __kern_sighandler_t addr,unsigned signr)
 {
+    segoff_t sp = t->t_regs.sp;
+
     debug("Stack %x:%x was %x %x %x %x\n", _FP_SEG(addr), _FP_OFF(addr),
            get_ustack(t,0), get_ustack(t,2), get_ustack(t,4), get_ustack(t,6));
+
+    if (sp > t->t_begstack || sp < t->t_endbrk + 6)
+        return -1;
     put_ustack(t, -6, (int)get_ustack(t,0));
     put_ustack(t, -4, _FP_OFF(addr));
     put_ustack(t, -2, _FP_SEG(addr));
@@ -118,6 +123,7 @@ void arch_setup_sighandler_stack(register struct task_struct *t,
     debug("Stack is %x %x %x %x %x %x %x\n", get_ustack(t,0), get_ustack(t,2),
            get_ustack(t,4), get_ustack(t,6), get_ustack(t,8), get_ustack(t,10),
            get_ustack(t,12));
+    return 0;
 }
 
 /*
@@ -168,7 +174,7 @@ void arch_build_stack(struct task_struct *t, void (*addr)())
         addr = ret_from_syscall;
     *tsp = (__u16)addr;                 /* Start execution address */
 #ifdef __ia16__
-    *(tsp-2) = kernel_ds;               /* Initial value for ES register */
+    *(tsp-2) = KERNEL_DS;               /* Initial value for ES register */
     t->t_ksp = (__u16)(tsp - 4);        /* Initial value for SP register */
 #else
     t->t_ksp = (__u16)(tsp - 3);        /* Initial value for SP register */

@@ -42,7 +42,7 @@
 #include <linuxmt/fs.h>
 #include <linuxmt/string.h>
 #include <linuxmt/mm.h>
-#include <linuxmt/memory.h>
+#include <linuxmt/segment.h>
 #include <linuxmt/timer.h>
 #include <linuxmt/devnum.h>
 #include <linuxmt/debug.h>
@@ -180,18 +180,18 @@ static void BFPROC probe_floppy(int target, struct hd_struct *hdp)
                 }
             }
 
-            /* second check for valid FAT BIOS parm block */
+            /* Check for valid FAT v3.31+ BPB in boot sector */
             unsigned char __far *boot = _MK_FP(DMASEG, 0);
-            if (
-                //(boot[510] == 0x55 && boot[511] == 0xAA) &&   /* bootable sig*/
-                ((boot[3] == 'M' && boot[4] == 'S') ||          /* OEM 'MSDOS'*/
-                 (boot[3] == 'I' && boot[4] == 'B'))     &&     /* or 'IBM'*/
-                (boot[54] == 'F' && boot[55] == 'A')       ) {  /* v4.0 fil_sys 'FAT'*/
+            if (((boot[3] == 'M' && boot[4] == 'S') ||      /* OEM 'MSDOS' */
+                 (boot[3] == 'I' && boot[4] == 'B'))     && /* or 'IBM' */
+                boot[0x10] && !boot[0x19] && !boot[0x1B] && /* nzfat, hi head/spt 0 */
+                (boot[0x1A] == 1 || boot[0x1A] == 2)     && /* 1 or 2 heads */
+                (boot[0x18] == 8 || boot[0x18] == 9 ||      /* valid # sectors */
+                 boot[0x18] == 15 || boot[0x18] == 18 || boot[0x18] == 36)) {
 
-                /* has valid MSDOS 4.0+ FAT BPB, use it */
-                drivep->sectors = boot[24];             /* bpb_sec_per_trk */
-                drivep->heads = boot[26];               /* bpb_num_heads */
-                unsigned char media = boot[21];         /* bpb_media_byte */
+                drivep->sectors = boot[0x18];           /* bpb_sec_per_trk */
+                drivep->heads = boot[0x1A];             /* bpb_num_heads */
+                unsigned char media = boot[0x15];       /* bpb_media_byte */
                 drivep->cylinders =
                         (media == 0xFD)? 40:
 #ifdef CONFIG_ARCH_PC98
@@ -516,7 +516,7 @@ static int BFPROC do_readwrite(struct drive_infot *drivep, sector_t start, char 
         segment = (seg_t)seg;
         offset = (unsigned) buf;
     }
-    errs = MAX_ERRS;        /* BIOS disk reads should be retried at least five times */
+    errs = 0;               /* BIOS disk reads should be retried at least five times */
     do {
         debug_cache("%s%s%d CHS %d/%d/%d count %d\n",
             cmd==WRITE? "WR": "RD", usedmaseg? "X": "", drive, cylinder, head, sector,
@@ -529,10 +529,11 @@ static int BFPROC do_readwrite(struct drive_infot *drivep, sector_t start, char 
                                 drive, cylinder, head, sector, segment, offset, drivep);
         if (error) {
             printk("bioshd(%x): cmd %d retry #%d CHS %d/%d/%d count %d\n",
-                drive, cmd, MAX_ERRS - errs + 1, cylinder, head, sector, this_pass);
+                drive, cmd, errs + 1, cylinder, head, sector, this_pass);
             bios_disk_reset(drive);
+            if (error == -1) errs = MAX_ERRS;   /* no retries on cylinder > 1023 error */
         }
-    } while (error && --errs);      /* On error, retry up to MAX_ERRS times */
+    } while (error && ++errs < MAX_ERRS);       /* On error, retry up to MAX_ERRS times */
     last_drive = drivep;
 
     if (cmd == WRITE && drivep == cache_drive)

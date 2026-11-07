@@ -74,7 +74,7 @@ KEYBOARD=
 # Uncomment the following line to emulate two serial devices, required for Nano-X:
 SERIAL="-chardev msmouse,id=c1 -device isa-serial,chardev=c1,id=s1 -chardev msmouse,id=c2 -device isa-serial,chardev=c2,id=s2"
 
-# Uncomment this to route ELKS /dev/ttyS0 to host terminal
+# Route ELKS serial /dev/ttyS0 to host terminal
 CONSOLE="-serial stdio"
 # Hides qemu window also
 #CONSOLE="-serial stdio -nographic"
@@ -87,12 +87,13 @@ CONSOLE="-serial stdio"
 # Incoming http forwarding: example: connect to ELKS httpd with 'http://localhost:8080'
 # HOSTFWD="-net user,hostfwd=tcp:127.0.0.1:8080-10.0.2.15:80"
 
-# Simultaneous telnet, http and ftp forwarding
+# Simultaneous telnet/2323, ftp/2121, http/8080, and audiorcv/4950 forwarding
 FWD="\
 hostfwd=tcp:127.0.0.1:8080-10.0.2.15:80,\
 hostfwd=tcp:127.0.0.1:2323-10.0.2.15:23,\
 hostfwd=tcp::8020-:20,\
-hostfwd=tcp::8021-:21,\
+hostfwd=tcp::2121-:21,\
+hostfwd=tcp::4950-:4950,\
 hostfwd=tcp::8041-:49821,\
 hostfwd=tcp::8042-:49822,\
 hostfwd=tcp::8043-:49823,\
@@ -101,7 +102,15 @@ hostfwd=tcp::8045-:49825,\
 hostfwd=tcp::8046-:49826,\
 hostfwd=tcp::8047-:49827,\
 hostfwd=tcp::8048-:49828,\
-hostfwd=tcp::8049-:49829"
+hostfwd=tcp::8049-:49829,\
+hostfwd=tcp::49152-:49152,\
+hostfwd=tcp::49153-:49153,\
+hostfwd=tcp::49154-:49154,\
+hostfwd=tcp::49155-:49155,\
+hostfwd=tcp::49156-:49156,\
+hostfwd=tcp::49157-:49157,\
+hostfwd=tcp::49158-:49158,\
+hostfwd=tcp::49159-:49159"
 
 # new style
 #NET="-net nic,model=ne2k_isa -net user,$FWD"
@@ -111,10 +120,10 @@ NET="-netdev user,id=mynet,$FWD -device ne2k_isa,irq=12,netdev=mynet"
 # Enable network dump here:
 # NETDUMP="-net dump"
 
-# Enable PC-Speaker here:
-#AUDIO="-audiodev pa,id=speaker -machine pcspk-audiodev=speaker"
-
 UNAME=`uname`
+
+# Enable PC-Speaker here (UNAME must be set first)
+[ "$UNAME" = 'Darwin' ] && AUDIO="-audiodev coreaudio,id=audio0 -machine pcspk-audiodev=audio0" || AUDIO="-audiodev pa,id=audio0 -machine pcspk-audiodev=audio0"
 
 # Determine display type ("Darwin" = OSX)
 [ "$UNAME" != 'Darwin' ] && QDISPLAY="-display sdl"
@@ -130,7 +139,7 @@ ACCEL_V9="-accel tcg,one-insn-per-tb=on"
 ACCEL_HVF="-accel hvf"
 
 ACCEL=$ACCEL_SSTP
-if [[ `$QEMU -version` =~ "version 9" || `$QEMU -version` =~ "version 10" ]]; then
+if [[ `$QEMU -version` =~ "version 9" || `$QEMU -version` =~ "version 10" || `$QEMU -version` =~ "version 11" ]]; then
      ACCEL=$ACCEL_V9
 fi
 if [[ $QEMU =~ "x86_64" && $UNAME =~ "Darwin" && $UNAME =~ "x86_64" ]]; then

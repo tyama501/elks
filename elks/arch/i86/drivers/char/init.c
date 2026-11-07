@@ -8,12 +8,12 @@ void INITPROC chr_dev_init(void)
     lp_init();
 #endif
 
-#ifdef CONFIG_CHAR_DEV_CGATEXT
-    cgatext_init();
-#endif
-
 #ifdef CONFIG_CHAR_DEV_MEM
     mem_dev_init();
+#endif
+
+#ifdef CONFIG_CHAR_DEV_DSP
+    dsp_init();
 #endif
 
 #ifdef CONFIG_INET

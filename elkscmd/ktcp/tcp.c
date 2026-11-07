@@ -10,6 +10,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -189,8 +190,8 @@ static void tcp_listen(struct iptcp_s *iptcp, struct tcpcb_s *lcb)
     if (h->flags & TF_ACK)
 	debug_tcp("tcp: ACK in listen not implemented\n");
 
-    /* duplicate control block but with normal sized input buffer, SO_RCVBUF ignored for now */
-    n = tcpcb_clone(lcb, CB_NORMAL_BUFSIZ);    /* copy lcb into linked list*/
+    /* duplicate CB  with normal or SO_RCVBUF sized buffer */
+    n = tcpcb_clone(lcb, lcb->acc_size? lcb->acc_size: CB_NORMAL_BUFSIZ);
     if (!n)
 	return;		     /* no memory for new connection*/
     cb = &n->tcpcb;
@@ -202,8 +203,9 @@ static void tcp_listen(struct iptcp_s *iptcp, struct tcpcb_s *lcb)
     cb->seg_seq = ntohl(h->seqnum);
     cb->seg_ack = ntohl(h->acknum);
 
-    cb->remaddr = iptcp->iph->saddr; /* sender's ip address*/
-    cb->remport = ntohs(h->sport);   /* sender's port*/
+    cb->localaddr = iptcp->iph->daddr; /* dest ip of incoming SYN (may be 127.0.0.1)*/
+    cb->remaddr = iptcp->iph->saddr;   /* sender's ip address*/
+    cb->remport = ntohs(h->sport);     /* sender's port*/
     cb->irs = cb->seg_seq;           /* sender's sequence number*/
     cb->rcv_nxt = cb->irs + 1;       /* ktcp's acknum */
     cb->rcv_wnd = ntohs(h->window);
@@ -246,6 +248,8 @@ static void tcp_established(struct iptcp_s *iptcp, struct tcpcb_s *cb)
 	    in_ntoa(cb->remaddr), ntohs(h->sport), ntohs(h->dport));
 #endif
 	rmv_all_retrans_cb(cb);
+	if (cb->bytes_to_push > 0)
+	    tcpcb_need_push--;
 
 	if (cb->state == TS_CLOSE_WAIT) {
 	    //cbs_in_user_timeout--;	/* CLOSE_WAIT does not timeout */
@@ -353,8 +357,10 @@ static void tcp_synrecv(struct iptcp_s *iptcp, struct tcpcb_s *cb)
 {
     struct tcphdr_s *h = iptcp->tcph;
 
-    if (h->flags & TF_RST)
-	cb->state = TS_LISTEN;		/* FIXME: not valid, should dealloc extra CB*/
+    if (h->flags & TF_RST) {
+	rmv_all_retrans_cb(cb);
+	tcpcb_remove_cb(cb);
+    }
     else if ((h->flags & TF_ACK) == 0)
 	debug_tcp("tcp: NO ACK IN SYNRECV\n");
     else {
@@ -486,37 +492,31 @@ static void tcp_last_ack(struct iptcp_s *iptcp, struct tcpcb_s *cb)
 
 /* Prepare and send RST for non-existing connections
  * (typically lingering connections  after a reboot) */
-void tcp_reject(struct iphdr_s *iph) {
-	struct tcpcb_list_s *cbnode;
-	struct tcphdr_s *tcph;
-	struct tcpcb_s *cb = NULL;
-	__u32 seqno;
+void tcp_reject(struct iphdr_s *iph)
+{
+    struct tcphdr_s *tcph;
+    __u32 seqno;
+    struct tcpcb_s cb;
 
-	tcph = (struct tcphdr_s *)(((char *)iph) + 4 * IP_HLEN(iph));
-	seqno = ntohl(tcph->seqnum);
-	debug_tcp("tcp: refusing packet from %s:%u to :%u fl 0x%02x\n",
-	    in_ntoa(iph->saddr), ntohs(tcph->sport), ntohs(tcph->dport), tcph->flags);
+    tcph = (struct tcphdr_s *)(((char *)iph) + 4 * IP_HLEN(iph));
+    seqno = ntohl(tcph->seqnum);
+    debug_tcp("tcp: refusing packet from %s:%u to :%u fl 0x%02x\n",
+        in_ntoa(iph->saddr), ntohs(tcph->sport), ntohs(tcph->dport), tcph->flags);
 
-	/* Dummy up a new control block and send RST to shutdown sender */
-	cbnode = tcpcb_new(1);		/* bufsize = 1, dummy */
-	if (cbnode) {
-	    cb = &cbnode->tcpcb;
-	    cb->state = TS_CLOSED;
-	    cb->localaddr = iph->daddr;
-	    cb->localport = ntohs(tcph->dport);
-	    cb->remaddr = iph->saddr;
-	    cb->remport = ntohs(tcph->sport);
-	    if (tcph->flags & TF_ACK) {
-		cb->flags = TF_RST;
-		cb->send_nxt = ntohl(tcph->acknum);
-	    } else
-		cb->flags = TF_RST|TF_ACK;
-	    cb->rcv_nxt = (tcph->flags & TF_SYN)? seqno+1: seqno;
-	    cb->datalen = 0;
-	    tcp_output(cb);		/* send RST*/
-	    tcpcb_remove(cbnode);	/* deallocate*/
-	}
-	return;
+    /* Use control block on stack in case no memory and send RST to shutdown sender */
+    memset(&cb, 0, sizeof(cb));
+    cb.state = TS_CLOSED;
+    cb.localaddr = iph->daddr;
+    cb.localport = ntohs(tcph->dport);
+    cb.remaddr = iph->saddr;
+    cb.remport = ntohs(tcph->sport);
+    if (tcph->flags & TF_ACK) {
+	cb.flags = TF_RST;
+	cb.send_nxt = ntohl(tcph->acknum);
+    } else
+	cb.flags = TF_RST|TF_ACK;
+    cb.rcv_nxt = (tcph->flags & TF_SYN)? seqno+1: seqno;
+    tcp_output(&cb);             /* send RST, no data, no queing in add_for_retrans */
 }
 
 /* process an incoming TCP packet*/

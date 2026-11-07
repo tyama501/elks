@@ -8,7 +8,6 @@
 
 extern void inet_proto_init();
 extern void unix_proto_init();
-extern void nano_proto_init();
 
 struct net_proto protocols[] = {
 #ifdef	CONFIG_UNIX

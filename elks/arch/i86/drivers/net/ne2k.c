@@ -32,9 +32,9 @@
 #define CHK8390_FULL     0  /* perform more robust 8390 chip detect in NIC probe */
 
 /* runtime configuration set in /bootopts or defaults in ports.h */
-#define net_irq     (netif_parms[ETH_NE2K].irq)
-#define NET_PORT    (netif_parms[ETH_NE2K].port)
-#define net_flags   (netif_parms[ETH_NE2K].flags)
+#define net_irq     (ne0_conf.irq)
+#define NET_PORT    (ne0_conf.port)
+#define net_flags   (ne0_conf.flags)
 int net_port;	    /* required for ne2k-asm.S */
 
 
@@ -50,7 +50,6 @@ static byte_t dev_name[] = "ne0";
 extern int ne2k_next_pk;
 extern word_t ne2k_flags;
 extern word_t ne2k_has_data;
-extern struct eth eths[];
 
 /*
  * Read a complete packet from the NIC buffer
@@ -204,7 +203,7 @@ static void ne2k_int(int irq, struct pt_regs *regs)
 
 	//printk("/");
 	while (1) {
-		stat = ne2k_int_stat();
+		stat = ne2k_int_stat() & 0x7f;
 		if (!stat) break; 	/* If zero, we're done! */
 #if 0	/* debug */
 		page = ne2k_getpage();
@@ -358,7 +357,7 @@ static void ne2k_release(struct inode *inode, struct file *file)
  * Ethernet operations
  */
 
-struct file_operations ne2k_fops =
+static struct file_operations ne2k_fops =
 {
     NULL,         /* lseek */
     ne2k_read,
@@ -437,12 +436,20 @@ void INITPROC ne2k_drv_init(void)
 				 */
 	byte_t *cprom, *mac_addr;
 
+	eths[ETH_NE0].ops = &ne2k_fops;
+
 	netif_stat.oflow_keep = 0;	/* Default - clear buffer if overflow.
 					 * Testing indicates 0 means faster recovery under heavy
 					 * load if buffer < 16k */
 	mac_addr = (byte_t *)&netif_stat.mac_addr;
 
 	net_port = NET_PORT;    // ne2k-asm.S needs this.
+
+	/* This has to be done before ne2k_get_hw_addr() 
+	*  otherwise the DMA routines in ne2k-asm.S will hang indefinitely
+	*  on an actual 8 bit-only interface. */
+	if (net_flags & ETHF_8BIT_BUS)
+		ne2k_flags = ETHF_8BIT_BUS;
 
 	while (1) {
 		int j, k;
@@ -520,5 +527,4 @@ void INITPROC ne2k_drv_init(void)
 		break;
 	}
 	ne2k_has_data = 0;
-	eths[ETH_NE2K].stats = &netif_stat;
 }

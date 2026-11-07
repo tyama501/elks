@@ -1,3 +1,6 @@
+#ifndef __ARCH_PORTS_H
+#define __ARCH_PORTS_H
+
 /*
  * ELKS I/O port and IRQ mappings
  *
@@ -11,9 +14,11 @@
  *  3   Com2    (/dev/ttyS1) CONFIG_CHAR_DEV_RS     Optional
  *  4   Com1    (/dev/ttyS0) CONFIG_CHAR_DEV_RS     Optional
  *  5*  Com3    (/dev/ttyS2) CONFIG_CHAR_DEV_RS     Optional
- *  5*  HW IDE hard drive    CONFIG_BLK_DEV_HD      Non-working directhd.c
+ *  5*  HW IDE hard drive
+ *  5*  Sound Blaster (dsp)  CONFIG_CHAR_DEV_DSP    Optional, avoid if a HD is fitted
  *  6   HW floppy drive      CONFIG_BLK_DEV_FD      Optional
  *  7   Unused (LPT, Com4)
+ *  7*  Sound Blaster (dsp)  CONFIG_CHAR_DEV_DSP    Optional, also gets PIC spurious IRQs
  *  8   Unused (RTC)
  *  9*  3C509/EL3 (/dev/3c0) CONFIG_ETH_EL3         Optional
  * 10*  WD 80x3   (/dev/wd0) CONFIG_ETH_WD          Optional
@@ -21,8 +26,8 @@
  * 12*  NE2K      (/dev/ne0) CONFIG_ETH_NE2K        Optional
  * 12*  Unused (Mouse)                              No driver
  * 13   Unused (Math coproc)                        No driver
- * 14   AT HD IDE (/dev/hda) CONFIG_BLK_DEV_HD      Non-working hd.c
- * 15   AT HD IDE (/dev/hdb) CONFIG_BLK_DEV_HD      Non-working hd.c
+ * 14   AT IDE hard drive
+ * 15   AT IDE hard drive
  *
  * Edit settings below to change port address or IRQ:
  *   Change I/O port and driver IRQ number to match your hardware
@@ -138,15 +143,58 @@
 #define EL3_IRQ         11
 #define EL3_FLAGS       0x80
 
+/* SMC Ultra/83C790, ultra.c: irq and ram 0 read the card's own configuration,
+ * override with ul0= in /bootopts if the board is strapped differently */
+#define ULTRA_PORT      0x280
+#define ULTRA_IRQ       0
+#define ULTRA_RAM       0
+#define ULTRA_FLAGS     0x80
+
+/* AMD PCnet/LANCE, pcnet.c: port 0 = autodetect via PCI on 386+,
+ * for ISA LANCE boards set port/irq with le0= in /bootopts */
+#define LANCE_PORT      0
+#define LANCE_IRQ       9
+#define LANCE_FLAGS     0x80
+
+/* /bootopts parms for an ISA card: irq,port,ram,flags.  NICs use all four,
+ * audio cards carry the 8-bit DMA channel in ram, and any driver private
+ * flags are defined by the driver itself.  A port of -1 means the card was
+ * turned off with "off" in /bootopts and the driver is to skip it.
+ */
+
+#ifndef __ASSEMBLER__
+struct isa_conf {
+    int irq;
+    int port;
+    unsigned int ram;
+    unsigned int flags;
+};
+#endif
+
+/* Sound Blaster /dev/dsp, audio-sb.c: override with sb=irq,port,dma,flags in
+ * /bootopts, flag bits are the ISAF_ defines in arch/audio-sb.h
+ */
+#define SB_PORT         0x220
+#define SB_IRQ          5               /* use IRQ 7 with DMA 1 on an XT with a hard disk */
+#define SB_DMA          1               /* 8-bit DMA channel, 1 or 3 */
+#define SB_FLAGS        0
+#define SB_BUFSIZE      4096            /* one playback DMA block, two are buffered */
+
+/* XT MFM hard disk, mfmhd.c: override with mfm=irq,port,,flags in /bootopts,
+ * flag bits are MFMF_ in the driver
+ */
+#define MFM_PORT        0x320           /* W4 jumper selects 0x320 or 0x324 */
+#define MFM_IRQ         5               /* PC/XT fixed disk interrupt */
+#define MFM_FLAGS       0
+
 /* bioshd.c*/
 #define FDC_DOR         0x3F2           /* floppy digital output register*/
 
-/* obsolete - experimental IDE hard drive, directhd.c (broken)*/
-#define HD1_PORT        0x1f0
-#define HD2_PORT        0x170
-#define HD_IRQ          5               /* missing request_irq call*/
-#define HD1_AT_IRQ      14              /* missing request_irq call*/
-#define HD2_AT_IRQ      15              /* missing request_irq call*/
-
 /* direct floppy driver, directfd.c */
 #define FLOPPY_IRQ      6
+
+/* idequery.c */
+#define HD1_PORT        0x1f0
+#define HD2_PORT        0x170
+
+#endif

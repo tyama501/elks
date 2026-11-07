@@ -33,23 +33,21 @@
 #include "netconf.h"
 #include "deveth.h"
 #include "arp.h"
-
-ipaddr_t local_ip;
-ipaddr_t gateway_ip;
-ipaddr_t netmask_ip;
-
-#define DEFAULT_IP		"10.0.2.15"
-#define DEFAULT_GATEWAY		"10.0.2.2"
-#define DEFAULT_NETMASK		"255.255.255.0"
+#include "dhcp.h"
 
 /* defaults*/
+#define DEFAULT_GATEWAY		"10.0.2.2"
+#define DEFAULT_NETMASK		"255.255.255.0"
 int linkprotocol = 	LINK_ETHER;
 char ethdev[10] = 	"/dev/ne0";
 char *serdev = 		"/dev/ttyS0";
 speed_t baudrate = 	57600;
 
-int dflag;
+ipaddr_t local_ip;
+ipaddr_t gateway_ip;
+ipaddr_t netmask_ip;
 unsigned int MTU;
+
 static int intfd;	/* interface fd*/
 
 // rename		timer			function called when active
@@ -64,6 +62,11 @@ int cbs_in_time_wait;		/* time_wait timer active, call tcp_expire_timeouts */
 int cbs_in_user_timeout;	/* fin_wait/closing/last_ack active, call " */
 int tcpcb_need_push;		/* push required, tcpcb_push_data/call notify_data_avail */
 int tcp_retrans_memory;		/* total retransmit memory in use*/
+char dhcp_enabled;
+char dhcp_timer_active;
+
+/* recheck interval while pushed data remains unread by application */
+#define PUSH_RECHECK_SECS	1
 
 void ktcp_run(void)
 {
@@ -71,18 +74,29 @@ void ktcp_run(void)
     struct timeval timeint, *tv;
     int count;
     int loopagain = 0;
+    int recheck = 0;
+    int force_push = 0;
 
     while (1) {
+	/* inform kernel of changed data available before sleeping */
+	tcpcb_push_data(force_push);
+	force_push = 0;
+	recheck = 0;
+
 	if (tcp_timeruse > 0 || tcpcb_need_push > 0 || loopagain ||
-	    cbs_in_time_wait > 0 || cbs_in_user_timeout > 0) {
+	    cbs_in_time_wait > 0 || cbs_in_user_timeout > 0 || dhcp_timer_active) {
 
 	    //printf("tcp: timer %d needpush %d timewait %d usertime %d\n", tcp_timeruse,
 		//tcpcb_need_push, cbs_in_time_wait, cbs_in_user_timeout);
 
-	    /* don't wait long if data needs pushing to tcpdev */
-	    if (tcpcb_need_push || loopagain) {
+	    if (loopagain) {
 		timeint.tv_sec  = 0;
-		timeint.tv_usec = tcpcb_need_push? 1000: 0;	/* 1msec */
+		timeint.tv_usec = 0;
+	    } else if (tcpcb_need_push) {
+		/* data unread, resend periodically in case of missed wakeup */
+		timeint.tv_sec  = PUSH_RECHECK_SECS;
+		timeint.tv_usec = 0;
+		recheck = 1;
 	    } else {
 		timeint.tv_sec  = 1;
 		timeint.tv_usec = 0;
@@ -103,6 +117,9 @@ void ktcp_run(void)
 		return;
 	}
 
+	if (recheck && count == 0)
+	    force_push = 1;
+
 	Now = get_time();
 
 	/* expire timeouts*/
@@ -111,10 +128,6 @@ void ktcp_run(void)
 		cbs_in_time_wait, cbs_in_user_timeout);
 	    tcpcb_expire_timeouts();
 	}
-
-	/* always push data*/
-	//if (tcpcb_need_push > 0)
-	    tcpcb_push_data();
 
 	loopagain = 0;
 
@@ -143,6 +156,10 @@ void ktcp_run(void)
 	/* check for expired retrans packets and free them*/
 	if (tcp_timeruse > 0)
 		tcp_retrans_expire();
+
+	/* check for DHCP timer expiration */
+	if (dhcp_timer_active)
+		dhcp_timer();
 
 	/* read all packets and sockets before handling retransmits*/
 	if (loopagain)
@@ -186,7 +203,7 @@ void catch(int sig)
 
 static void usage(void)
 {
-    printf("Usage: ktcp [-b] [-d] [-m MTU] [-p ee0|ne0|wd0|3c0|slip|cslip] [-s baud] [-l device] [local_ip] [gateway] [netmask]\n");
+    printf("Usage: ktcp [-b] [-d] [-m MTU] [-p <ethdev>|slip|cslip] [-s baud] [-l device] [local_ip] [gateway] [netmask]\n");
     exit(1);
 }
 
@@ -196,6 +213,7 @@ int main(int argc,char **argv)
     int bflag = 0;
     int mtu = 0;
     char *p;
+    char *default_ip, *default_gateway, *default_netmask;
     static char *linknames[3] = { "", "slip", "cslip" };
 
     while ((ch = getopt(argc, argv, "bdm:p:s:l:")) != -1) {
@@ -203,24 +221,18 @@ int main(int argc,char **argv)
 	case 'b':		/* background daemon*/
 	    bflag = 1;
 	    break;
-	case 'd':		/* debug messages*/
-	    dflag++;
+	case 'd':		/* force enable DHCP for IP address*/
+	    dhcp_enabled = 1;
 	    break;
 	case 'm':		/* MTU*/
 		mtu = (int)atol(optarg);
 		break;
 	case 'p':		/* link protocol*/
-	    linkprotocol = !strcmp(optarg, "ne0")? LINK_ETHER :
-			   !strcmp(optarg, "wd0")? LINK_ETHER :
-			   !strcmp(optarg, "3c0")? LINK_ETHER :
-			   !strcmp(optarg, "ee0")? LINK_ETHER :
-			   !strcmp(optarg, "le0")? LINK_ETHER :
-			   !strcmp(optarg, "slip")? LINK_SLIP :
-			   !strcmp(optarg, "cslip")? LINK_CSLIP:
-			   -1;
-	    if (linkprotocol < 0) usage();
+	    linkprotocol = !strcmp(optarg, "slip")? LINK_SLIP :
+			   !strcmp(optarg, "cslip")? LINK_CSLIP :
+			    LINK_ETHER;
 	    if (linkprotocol == LINK_ETHER)
-		strcpy(&ethdev[5], optarg);
+		strncpy(&ethdev[5], optarg, 3);
 	    break;
 	case 's':		/* serial speed*/
 	    baudrate = atol(optarg);
@@ -237,16 +249,24 @@ int main(int argc,char **argv)
     if (timer_init() < 0)
 	exit(1);
     /*
-     * Default IP, gateway and netmask set by env variables in
-     * /bootopts or /etc/profile. They can be IP addresses or
+     * Three arguments can be passed to ktcp, which are the
+     * default IP, gateway and netmask. If not passed, the environment
+     * variables LOCALIP, GATEWAY and NETMASK are used, which can also
+     * be set in /bootopts or /etc/profile. They can be IP addresses or
      * names in /etc/hosts.
+     * If LOCALIP is not set by the environment or passed to ktcp, DHCP
+     * will be enabled to retrieve these settings from a local DHCP server.
      */
-    char *default_ip = (p=getenv("HOSTNAME"))? p: DEFAULT_IP;
-    char *default_gateway = (p=getenv("GATEWAY"))? p: DEFAULT_GATEWAY;
-    char *default_netmask = (p=getenv("NETMASK"))? p: DEFAULT_NETMASK;
-    local_ip = in_gethostbyname(optind < argc? argv[optind++]: default_ip);
-    gateway_ip = in_gethostbyname(optind < argc? argv[optind++]: default_gateway);
-    netmask_ip = in_gethostbyname(optind < argc? argv[optind++]: default_netmask);
+     if (!dhcp_enabled) {
+	default_ip = getenv("LOCALIP");
+	default_gateway = (p=getenv("GATEWAY"))? p: DEFAULT_GATEWAY;
+	default_netmask = (p=getenv("NETMASK"))? p: DEFAULT_NETMASK;
+	local_ip = in_gethostbyname(optind < argc? argv[optind++]: default_ip);
+	gateway_ip = in_gethostbyname(optind < argc? argv[optind++]: default_gateway);
+	netmask_ip = in_gethostbyname(optind < argc? argv[optind++]: default_netmask);
+	if (!local_ip)
+	    dhcp_enabled = 1;
+    }
     MTU = mtu ? mtu : (linkprotocol == LINK_ETHER ? ETH_MTU : SLIP_MTU);
 
     /* must exit() in next two stages on error to reset kernel tcpdev_inuse to 0*/
@@ -260,15 +280,20 @@ int main(int argc,char **argv)
     if (intfd < 0)
 	exit(2);
 
-    printf("ktcp: ip %s, ", in_ntoa(local_ip));
-    printf("gateway %s, ", in_ntoa(gateway_ip));
-    printf("netmask %s\n", in_ntoa(netmask_ip));
+    if (!dhcp_enabled) {
+	printf("ktcp: ip %s, ", in_ntoa(local_ip));
+	printf("gateway %s, ", in_ntoa(gateway_ip));
+	printf("netmask %s\n", in_ntoa(netmask_ip));
+    }
 
     printf("ktcp: ");
     if (linkprotocol == LINK_ETHER)
 	printf("%s mac %s", ethdev, mac_ntoa(eth_local_addr));
     else printf("%s %s baud %lu", linknames[linkprotocol], serdev, baudrate);
-    printf(" mtu %u\n", MTU);
+    printf(" mtu %u", MTU);
+    if (dhcp_enabled)
+	printf(", DHCP enabled");
+    printf("\n");
 
     signal(SIGHUP, catch);
     signal(SIGINT, catch);
@@ -297,6 +322,7 @@ int main(int argc,char **argv)
     icmp_init();
     tcp_init();
     netconf_init();
+    dhcp_init();
 
     ktcp_run();
 

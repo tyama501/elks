@@ -19,7 +19,6 @@
 #include <string.h>
 #include <limits.h>
 #include <errno.h>
-#include <linuxmt/limits.h>
 #include "config.h"
 #include "tcp.h"
 #include "ip.h"
@@ -35,7 +34,7 @@ eth_addr_t eth_local_addr;
 static unsigned char sbuf[MAX_PACKET_ETH];
 static int devfd;
 
-//static eth_addr_t broad_addr = {255, 255, 255, 255, 255, 255};
+static eth_addr_t broad_addr = {255, 255, 255, 255, 255, 255};
 
 int deveth_init(char *fdev)
 {
@@ -83,16 +82,24 @@ void eth_process(void)
 
   /* dispatch to IP or ARP*/
   switch (eth_head->eth_type) {
-  case ETH_TYPE_IPV4:
+  case ETH_TYPE_IPV4: {
+	  struct iphdr_s *iph = (struct iphdr_s *)(sbuf + sizeof(eth_head_t));
+	  /* Accept only packets addressed to us or the limited broadcast
+	   * (255.255.255.255).  DHCP servers reply to the broadcast address
+	   * before the client has an assigned IP. */
+	  if (iph->daddr != local_ip && iph->daddr != (ipaddr_t)-1)
+	      break;
 	  /* strip link layer */
 	  ip_recvpacket (sbuf + sizeof(eth_head_t), len - sizeof(eth_head_t));
 	  break;
+  }
 
   case ETH_TYPE_ARP:
 	  arp_recvpacket (sbuf, len);
 	  break;
   }
   netstats.ethrcvcnt++;
+  netconf_capture_packet(sbuf, len, 0);
 }
 
 /*
@@ -105,6 +112,12 @@ void eth_route(unsigned char *packet, int len, ipaddr_t ip_addr)
 	struct arp_cache *entry;
 	eth_addr_t eth_addr;
 	unsigned char *p;
+
+	/* broadcast to 255.255.255.255 */
+	if (ip_addr == 0xFFFFFFFF) {
+		eth_sendpacket(packet, len, broad_addr);
+		return;
+	}
 
 	/* try to get cached ethernet address and send packet*/
 	if (arp_cache_get (ip_addr, eth_addr, ARP_VALID)) {
@@ -161,7 +174,11 @@ void eth_write(unsigned char *packet, int len)
 #if DEBUG_ETH
     eth_printhex(packet,len);
 #endif
-    write(devfd, packet, len);
+    netconf_capture_packet(packet, len, 1);
+    if (write(devfd, packet, len) < 0 && errno == EAGAIN) {
+	usleep(1000L);              /* TX busy: wait for it to drain, retry once */
+	write(devfd, packet, len);
+    }
     netstats.ethsndcnt++;
 }
 

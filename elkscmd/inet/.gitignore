@@ -1,11 +1,16 @@
 arp
+curl
+ifconfig
 ftp
 ftpd
 httpd
 netcat
 netstat
 nslookup
+ping
+tcpdump
 telnet
 telnetd
+traceroute
 urlget
 tinyirc/tinyirc

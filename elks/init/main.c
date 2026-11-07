@@ -1,3 +1,6 @@
+/*
+ * Kernel startup and /bootopts configuration
+ */
 #include <linuxmt/config.h>
 #include <linuxmt/init.h>
 #include <linuxmt/mm.h>
@@ -5,12 +8,13 @@
 #include <linuxmt/types.h>
 #include <linuxmt/fcntl.h>
 #include <linuxmt/ntty.h>
-#include <linuxmt/memory.h>
+#include <linuxmt/segment.h>
 #include <linuxmt/kernel.h>
 #include <linuxmt/string.h>
 #include <linuxmt/fs.h>
 #include <linuxmt/utsname.h>
 #include <linuxmt/netstat.h>
+#include <linuxmt/audio.h>
 #include <linuxmt/trace.h>
 #include <linuxmt/devnum.h>
 #include <linuxmt/heap.h>
@@ -18,13 +22,24 @@
 #include <linuxmt/timer.h>
 #include <linuxmt/debug.h>
 #include <arch/segment.h>
+#include <arch/seg286.h>
 #include <arch/ports.h>
 #include <arch/irq.h>
 #include <arch/io.h>
 
 /*
- *  System variable setups
+ * Device driver options settable via /bootopts
  */
+struct isa_conf ne0_conf = { NE2K_IRQ,  NE2K_PORT,  0,      NE2K_FLAGS };
+struct isa_conf wd0_conf = { WD_IRQ,    WD_PORT,    WD_RAM, WD_FLAGS };
+struct isa_conf el3_conf = { EL3_IRQ,   EL3_PORT,   0,      EL3_FLAGS }; /* uses 3c0= */
+struct isa_conf ul0_conf = { ULTRA_IRQ, ULTRA_PORT, ULTRA_RAM, ULTRA_FLAGS };
+struct isa_conf le0_conf = { LANCE_IRQ, LANCE_PORT, 0,      LANCE_FLAGS };
+struct isa_conf mfm_conf = { MFM_IRQ,   MFM_PORT,   0,      MFM_FLAGS };
+struct isa_conf sb_conf =  { SB_IRQ,    SB_PORT,    SB_DMA, SB_FLAGS };
+int iga_opts;                   /* CONFIG_CONSOLE_AMSTRAD_IGA iga= options */
+
+/* internal non-driver declarations */
 #define ENV             1       /* allow environ variables as bootopts*/
 #define DEBUG           0       /* display parsing at boot*/
 
@@ -35,21 +50,15 @@
 
 #define ARRAYLEN(a)     (sizeof(a)/sizeof(a[0]))
 
-struct netif_parms netif_parms[MAX_ETHS] = {
-
-    /* NOTE:  The order must match the defines in netstat.h:
-     * ETH_NE2K, ETH_WD, ETH_EL3    */
-    { NE2K_IRQ, NE2K_PORT, 0, NE2K_FLAGS },
-    { WD_IRQ, WD_PORT, WD_RAM, WD_FLAGS },
-    { EL3_IRQ, EL3_PORT, 0, EL3_FLAGS },
-};
-seg_t kernel_cs, kernel_ds;
+seg_t kernel_cs, kernel_ds;     /* always segment values even in PM */
 int root_mountflags;
 int tracing;
 int nr_ext_bufs, nr_xms_bufs, nr_map_bufs;
 int xms_bootopts;
 int ata_mode = -1;              /* =AUTO default set ATA CF driver mode automatically */
 char running_qemu;
+seg_t dmesg_seg;                /* segment of dmesg circular queue */
+static int dmesg;               /* dmesg buffer size in K from /bootopts */
 static int boot_console;
 static segext_t umbtotal;
 static kdev_t disabled[4];      /* disabled devices using disable= */
@@ -95,6 +104,7 @@ static void FARPROC far_start_kernel(void);
 static void INITPROC early_kernel_init(void);
 static void INITPROC kernel_init(void);
 static void INITPROC kernel_banner(seg_t init, seg_t extra);
+static void INITPROC dmesg_init(void);
 static void init_task(void);
 static void idle_loop(void);
 
@@ -110,18 +120,23 @@ static void idle_loop(void);
  */
 void start_kernel(void)
 {
-    //tracing = TRACE_KSTACK | TRACE_ISTACK;
+    clr_irq();                      /* we're running on the kernel interrupt stack! */
+
+#ifdef CONFIG_286_PMODE
+    pm_early_init();                /* setup CS/DS/.fartext selectors, enter PM */
+    pm_init();                      /* discardable remainder of PM initialization */
+
+    xms_bootopts = XMS_PMODE;       /* default to XMS on unless xms=off in /bootopts */
+#endif
+
     far_start_kernel();             /* start executing in reusable memory */
 }
 
 static void FARPROC far_start_kernel(void)
 {
-    flag_t flags;                   /* get CPU flag word */
-    save_flags(flags);
-    clr_irq();                      /* we're running on the kernel interrupt stack! */
-    printk("INT %x ", flags);       /* to show interrupt status after setup.S */
     printk("START\n");
 
+    //tracing = TRACE_KSTACK | TRACE_ISTACK;
     early_kernel_init();            /* read bootopts using kernel interrupt stack */
 
      /*
@@ -212,8 +227,13 @@ static void INITPROC early_kernel_init(void)
 
     /* create near heap at end of kernel bss */
     heap_init();                    /* init near memory allocator */
-    heapofs = setup_arch();          /* sets membase and memend globals */
+    heapofs = setup_arch();         /* sets membase and memend globals */
     heap_add((void *)heapofs, heapsize);
+#ifdef CONFIG_286_PMODE
+    membase += GDT_SIZE >> 4;       /* skip GDT table at kernel_ds + 0x1000 */
+#endif
+    //memend = 256 << 6;            /* force early XMS allocations in PM */
+    dmesg_init();                   /* may decrease memend */
     mm_init(membase, memend);       /* init far/main memory allocator */
 
 #ifdef CONFIG_BOOTOPTS
@@ -262,7 +282,19 @@ static void INITPROC kernel_init(void)
 
 #ifdef CONFIG_FARTEXT_KERNEL
     /* add .farinit.init section to main memory free list */
-    seg_t     init_seg = ((unsigned long)(void __far *)__start_fartext_init) >> 16;
+    seg_t     init_seg = _FP_SEG(__start_fartext_init);
+
+#ifdef CONFIG_286_PMODE
+    init_seg = desc_base(init_seg) >> 4;    /* convert selector to physical segment */
+
+    /* calculate remaining xms start and end in paragraphs */
+    selext_t xms_start = (XMS_START_ADDR >> 4) + (xms_alloc_ptr << 6);
+    selext_t xms_end   = (XMS_START_ADDR >> 4) + ((addr_t)SETUP_XMS_KBYTES << 6);
+    seg_add(xms_start, xms_end);            /* add remaining XMS memory paragraphs */
+    printk("xms: %luK, start %06lx end %06lx\n",
+        (xms_end - xms_start) >> 6, xms_start << 4, xms_end << 4);
+#endif
+
     seg_t s = init_seg + (((word_t)(void *)__start_fartext_init + 15) >> 4);
     seg_t e = init_seg + (((word_t)(void *)  __end_fartext_init + 15) >> 4);
     debug("init: seg %04x to %04x size %04x (%d)\n", s, e, (e - s) << 4, (e - s) << 4);
@@ -277,15 +309,15 @@ static void INITPROC kernel_init(void)
 static void INITPROC kernel_banner(seg_t init, seg_t extra)
 {
     kernel_banner_arch();
-    printk("syscaps %x, %uK base ram, %d tasks, %d files, %d inodes\n",
-        sys_caps, SETUP_MEM_KBYTES, max_tasks, nr_file, nr_inode);
+    printk("syscaps %x, %uK ram, %d tasks, %d files, %d inodes\n",
+        sys_caps, memend >> 6, max_tasks, nr_file, nr_inode);
     printk("ELKS %s (%u text, %u ftext, %u data, %u bss, %u heap)\n",
            system_utsname.release,
            (unsigned)_endtext, (unsigned)_endftext, (unsigned)_enddata,
            (unsigned)_endbss - (unsigned)_enddata, heapsize);
     printk("Kernel text %x ", kernel_cs);
 #ifdef CONFIG_FARTEXT_KERNEL
-    printk("ftext %x init %x ", (unsigned)((long)kernel_init >> 16), init);
+    printk("ftext %x init %x ", kernel_ftext, init);
 #endif
     printk("data %x end %x top %x %u+%u+%uK free\n",
            kernel_ds, membase, memend, (int) ((memend - membase) >> 6),
@@ -327,11 +359,11 @@ static void INITPROC do_init_task(void)
     heap_add(&opts, sizeof(opts));
 #ifdef CONFIG_FS_XMS
     if (xms_enabled == XMS_LOADALL) {
-        seg_add(DEF_OPTSEG, 0x80);  /* carve out LOADALL buf 0x800-0x865 from release! */
-        seg_add(0x87, DMASEG);
+        seg_add(SEG_OPTSEG, 0x80);  /* carve out LOADALL buf 0x800-0x865 from release! */
+        seg_add(0x87, SEG_DMASEG);
     } else  /* fall through */
 #endif
-    seg_add(DEF_OPTSEG, DMASEG);    /* DEF_OPTSEG through REL_INITSEG */
+    seg_add(SEG_OPTSEG, SEG_DMASEG);    /* SEG_OPTSEG through SEG_INITSEG */
 
     /* run /bin/init or init= command w/argc/argv/env, normally no return*/
     run_init_process_sptr(init_command, (char *)argv_init, argv_slen);
@@ -355,19 +387,21 @@ static struct dev_name_struct {
     const char *name;
     int num;
 } devices[] = {
-	/* the 6 partitionable drives must be first */
+	/* the 8 partitionable drives must be first */
 	{ "hda",     DEV_HDA },         /* 0 */
 	{ "hdb",     DEV_HDB },
 	{ "hdc",     DEV_HDC },
 	{ "hdd",     DEV_HDD },
 	{ "cfa",     DEV_CFA },
 	{ "cfb",     DEV_CFB },
-	{ "fd0",     DEV_FD0 },         /* 6 */
+	{ "mfma",    DEV_MFMA },
+	{ "mfmb",    DEV_MFMB },
+	{ "fd0",     DEV_FD0 },         /* 8 */
 	{ "fd1",     DEV_FD1 },
-	{ "df0",     DEV_DF0 },         /* 8 */
+	{ "df0",     DEV_DF0 },         /* 10 */
 	{ "df1",     DEV_DF1 },
 	{ "rom",     DEV_ROM },
-	{ "ttyS0",   DEV_TTYS0 },       /* 11 */
+	{ "ttyS0",   DEV_TTYS0 },       /* 13 */
 	{ "ttyS1",   DEV_TTYS1 },
 	{ "tty1",    DEV_TTY1 },
 	{ "tty2",    DEV_TTY2 },
@@ -384,18 +418,21 @@ char *root_dev_name(kdev_t dev)
 {
     int i;
     unsigned int mask;
+    unsigned int len;
 #define NAMEOFF 13
-    static char name[18] = "ROOTDEV=/dev/";
+    static char name[20] = "ROOTDEV=/dev/";
 
     name[8] = '/';
-    for (i=0; i<11; i++) {
-        mask = (i < 6)? 0xfff8: 0xffff;
+    for (i=0; i<13; i++) {
+        mask = (i < 8)? 0xfff8: 0xffff;
         if (devices[i].num == (dev & mask)) {
             strcpy(&name[NAMEOFF], devices[i].name);
-            if (i < 6) {
+            if (i < 8) {
                 if (dev & 0x07) {
-                    name[NAMEOFF+3] = '0' + (dev & 7);
-                    name[NAMEOFF+4] = '\0';
+                    /* device names are no longer all three characters */
+                    len = strlen(devices[i].name);
+                    name[NAMEOFF + len] = '0' + (dev & 7);
+                    name[NAMEOFF + len + 1] = '\0';
                 }
             }
             return name;
@@ -460,10 +497,15 @@ static void INITPROC comirq(char *line)
 #endif
 }
 
-static void INITPROC parse_nic(char *line, struct netif_parms *parms)
+/* irq,port,ram,flags for any ISA card; ram is the DMA channel on an audio card */
+static void INITPROC parse_isaopts(char *line, struct isa_conf *parms)
 {
     char *p;
 
+    if (!strcmp(line, "off")) {
+        parms->port = -1;
+        return;
+    }
     parms->irq = (int)simple_strtol(line, 0);
     if ((p = strchr(line, ','))) {
         parms->port = (int)simple_strtol(p+1, 16);
@@ -528,7 +570,7 @@ static int INITPROC parse_options(void)
     char *next;
 
     /* copy /bootopts loaded by boot loader at 0050:0000*/
-    fmemcpyb(opts.options, kernel_ds, 0, DEF_OPTSEG, sizeof(opts.options));
+    fmemcpyb(opts.options, KERNEL_DS, 0, OPTSEG, sizeof(opts.options));
 
 #pragma GCC diagnostic ignored "-Wstrict-aliasing"
     /* check file starts with ##, one or two sectors, max 1023 bytes or 511 one sector */
@@ -601,15 +643,31 @@ static int INITPROC parse_options(void)
             continue;
         }
         if (!strncmp(line,"ne0=",4)) {
-            parse_nic(line+4, &netif_parms[ETH_NE2K]);
+            parse_isaopts(line+4, &ne0_conf);
             continue;
         }
         if (!strncmp(line,"wd0=",4)) {
-            parse_nic(line+4, &netif_parms[ETH_WD]);
+            parse_isaopts(line+4, &wd0_conf);
             continue;
         }
         if (!strncmp(line,"3c0=",4)) {
-            parse_nic(line+4, &netif_parms[ETH_EL3]);
+            parse_isaopts(line+4, &el3_conf);
+            continue;
+        }
+        if (!strncmp(line,"ul0=",4)) {
+            parse_isaopts(line+4, &ul0_conf);
+            continue;
+        }
+        if (!strncmp(line,"le0=",4)) {
+            parse_isaopts(line+4, &le0_conf);
+            continue;
+        }
+        if (!strncmp(line,"mfm=",4)) {
+            parse_isaopts(line+4, &mfm_conf);
+            continue;
+        }
+        if (!strncmp(line,"sb=",3)) {
+            parse_isaopts(line+3, &sb_conf);
             continue;
         }
         if (!strncmp(line,"debug=", 6)) {
@@ -623,22 +681,33 @@ static int INITPROC parse_options(void)
         if (!strncmp(line,"xms=",4)) {
             if (!strcmp(line+4, "on"))    xms_bootopts = XMS_UNREAL;
             if (!strcmp(line+4, "int15")) xms_bootopts = XMS_INT15;
+            if (!strcmp(line+4, "off"))   xms_bootopts = XMS_DISABLED;
             continue;
         }
         if (!strncmp(line,"xmsbuf=",7)) {
             nr_xms_bufs = (int)simple_strtol(line+7, 10);
             continue;
         }
-        if (!strncmp(line,"xtide=",6)) {
-            ata_mode = (int)simple_strtol(line+6, 10);
-            continue;
-        }
         if (!strncmp(line,"cache=",6)) {
             nr_map_bufs = (int)simple_strtol(line+6, 10);
             continue;
         }
+        if (!strncmp(line,"xtide=",6)) {
+            ata_mode = (int)simple_strtol(line+6, 10);
+            continue;
+        }
+        if (!strncmp(line,"iga=",4)) {
+            iga_opts = (int)simple_strtol(line+4, 10);
+            continue;
+        }
         if (!strncmp(line,"heap=",5)) {
+#ifndef CONFIG_286_PMODE
             heapsize = (unsigned int)simple_strtol(line+5, 10);
+#endif
+            continue;
+        }
+        if (!strncmp(line,"dmesg=",6)) {
+            dmesg = (unsigned int)simple_strtol(line+6, 10);
             continue;
         }
         if (!strncmp(line,"task=",5)) {
@@ -770,3 +839,21 @@ static char * INITPROC option(char *s)
     return s;
 }
 #endif /* CONFIG_BOOTOPTS*/
+
+void INITPROC dmesg_init(void)
+{
+    struct dmesg_queue __far *q;
+
+    if (dmesg) {
+        if (dmesg > 63) dmesg = 63;
+        dmesg_seg = memend - (dmesg << 6);
+        memend -= (dmesg << 6);
+#ifdef CONFIG_286_PMODE
+        dmesg_seg = desc_alloc((addr_t)dmesg_seg << 4, (addr_t)dmesg << 10, DESC_KDATA);
+#endif
+
+        q = _MK_FP(dmesg_seg, 0); 
+        q->size = (dmesg << 10) - offsetof(struct dmesg_queue, base);
+        q->len = q->head = 0;
+    }
+}

@@ -3,6 +3,7 @@ chmem
 clock
 console
 decomp
+dmesg
 exitemu
 getty
 hostdecomp
@@ -10,6 +11,7 @@ init
 kill
 knl
 login
+logout
 makeboot
 man
 meminfo
@@ -21,6 +23,7 @@ ps
 sercat
 shutdown
 sysctl
+sudo
 umount
 test_unreal
 who

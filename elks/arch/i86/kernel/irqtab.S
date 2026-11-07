@@ -4,8 +4,13 @@
 #include <arch/asm-offsets.h>
 #include <arch/ports.h>
 #include <arch/irq.h>
+#include <arch/segment.h>
 
+#ifdef CONFIG_286_PMODE
+        .arch   i286, nojumps   // PM build: 286 superset (push imm); 8086 code unaffected
+#else
         .arch   i8086, nojumps
+#endif
         .code16
         .text
 
@@ -69,7 +74,12 @@ _irqit:
 //      TODO: BP is better for stack work
 //
         mov     %sp,%si
+#ifdef CONFIG_286_PMODE
+        push    $SEL_KDATA      // trampoline return-CS is code alias, not usable as DS
+        pop     %ds
+#else
         mov     %ss:8(%si),%ds
+#endif
 //
 //      Determine which stack to use
 //
@@ -120,6 +130,10 @@ save_regs:
         pop     8(%si)          // DS
         pop     %di             // Return offset is actually a pointer to the IRQ number
         pop     %ds             // Return segment of the dynamic handler = kernel DS
+#ifdef CONFIG_286_PMODE
+        push    $SEL_KDATA      // force DS = SEL_KDATA (popped return-CS is code alias)
+        pop     %ds
+#endif
         push    %bp             // BP
         mov     %sp,10(%si)     // SP
         mov     %ss,12(%si)     // SS
@@ -160,11 +174,16 @@ save_regs:
         call    syscall
         push    %ax             // syscall return value in ax
 
-#ifdef CONFIG_TRACE
+//#ifdef CONFIG_TRACE
         // strace.c must be compiled with tail optimization off to protect top of stack
+        // Now always checks for kernel stack overflow
         call    trace_end       // syscall return value is top of stack
-#endif
-        call    do_signal       // process signals
+//#endif
+
+        cmpw    $0,bh_active    // Any active bottom halfs?
+        je      1f              // No
+        call    do_bottom_half  // Run bottom halves
+1:      call    do_signal       // process signals
         cli
         jmp     restore_regs
 //
@@ -207,7 +226,7 @@ doirq:
         jz      was_trap
 #endif
 
-#if defined(CONFIG_BLK_DEV_BFD) && !defined(CONFIG_ARCH_PC98)
+#if defined(CONFIG_BLK_DEV_BFD) && !defined(CONFIG_ARCH_PC98) && !defined(CONFIG_286_PMODE)
         or      %ax,%ax         // Is int #0?
         jnz     do_eoi
 //

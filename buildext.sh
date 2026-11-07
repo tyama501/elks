@@ -15,6 +15,8 @@
 #       dcc             ia6-elf-gcc     DCC self-compiling C compiler for ELKS
 #       dflat           ia16-elf-gcc    D-Flat TUI memopad/library
 #       elkirc          ia16-elf-gcc    IRC for ELKS
+#       elksdigger      ia16-elf-gcc    Digger for ELKS
+#       elksweb         ia16-elf-gcc    Graphical HTTP browser for IBM PC compatibles
 #       owc_libc        OpenWatcom      ELKS C Library compiled by OWC
 #       owc_elkscmd     OpenWatcom      Some elkscmd/ programs compiled by OWC
 #       c86_toolchain   OpenWatcom/C86  C86 Toolchain, header files and examples
@@ -225,13 +227,41 @@ elkirc()
     echo "Building elkirc..."
     cd $TOPDIR/extapps
     if [ ! -d elkirc ] ; then
-        git clone https://github.com/sepen/elkirc
+        git clone https://github.com/ghaerr/elkirc
     fi
     cd elkirc
     git pull
     make clean
     make ELKS=1
     echo "elkirc build complete"
+}
+
+elksdigger()
+{
+    echo "Building elksdigger..."
+    cd $TOPDIR/extapps
+    if [ ! -d ELKS-Digger ] ; then
+        git clone https://github.com/Vutshi/ELKS-Digger
+    fi
+    cd ELKS-Digger/elks
+    git pull
+    make clean
+    make
+    echo "elksdigger build complete"
+}
+
+gem()
+{
+    echo "Building GEM Desktop..."
+    cd $TOPDIR/extapps
+    if [ ! -d Gem-elks ] ; then
+        git clone https://github.com/parabyte/Gem-elks
+    fi
+    cd Gem-elks
+    git pull
+    make -f Makefile.elks ELKS_ROOT=$TOPDIR clean
+    make -f Makefile.elks ELKS_ROOT=$TOPDIR
+    echo "GEM Desktop build complete"
 }
 
 elks_viewer()
@@ -319,6 +349,19 @@ elksmoria()
     echo "ELKSmoria build complete"
 }
 
+elksweb()
+{
+    echo "Building ELKSWeb..."
+    cd "$TOPDIR/extapps"
+    if [ ! -d ELKSWeb ] ; then
+        git clone https://github.com/l00nix/ELKSWeb.git ELKSWeb
+    fi
+    cd ELKSWeb
+    git pull --ff-only
+    ELKSWEB_ELKS="$TOPDIR" sh toolchain/build-external.sh
+    echo "ELKSWeb build complete"
+}
+
 # build all extapps repos
 make_all()
 {
@@ -326,6 +369,9 @@ make_all()
     dcc
     dflat
     elkirc
+    elksdigger
+    elksweb
+    gem
     if [ -n "$WATCOM" ] ; then
         owc_libc
         owc_elkscmd

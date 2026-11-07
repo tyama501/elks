@@ -12,6 +12,58 @@
 #include <linuxmt/heap.h>
 
 #include <arch/segment.h>
+#include <arch/seg286.h>
+
+#ifdef CONFIG_286_PMODE
+/* In protected mode the allocator manages the physical paragraph using the
+ * additional 'para' member via the BASE() macro, and a GDT selector is allocated
+ * whose selector is stored in the 'base' member. This is used externally instead
+ * of the segment register value stored there in real mode.
+ * Real mode just uses single 'base' member as segment address.
+ */
+#define BASE(seg)   ((seg)->addr)   /* use base paragraph address in protected mode */
+
+static byte_t seg_pm_access(word_t type)
+{
+    /* User mode code and data use ring 0 (DPL 0) selectors.  Running user code at DPL3
+     * (DESC_UCODE/UDATA) would give real protection but need a TSS for the ring3->ring0
+     * interrupt stack switch.
+     */
+    return ((type & SEG_FLAG_TYPE) == SEG_FLAG_CSEG) ? DESC_KCODE : DESC_KDATA;
+}
+
+/* allocate selector for passed segment_s structure, 0 = GDT full or limit exceeded */
+static int seg_pm_attach(segment_s *seg, word_t type)
+{
+    selext_t limit = seg->size << 4;
+
+    /* Allow non-XMS selector limit of max 64K for now for automatic 80286 compatibility.
+     * User mode fmemalloc allocations are also limited to 64K max segments
+     * unless 32-bit instructions are used within the application.
+     */
+    if (!(type & SEG_FLAG_XMS) && (limit >> 16) > 1) {
+        printk("seg_alloc: %08lx limit > 64K\n", limit);
+        return 0;
+    }
+
+    seg->base = desc_alloc(seg->addr << 4, limit, seg_pm_access(type));
+    return seg->base;
+}
+
+static void seg_pm_detach(segment_s *seg)
+{
+    if (seg->base) {
+        desc_free(seg->base);
+        seg->base = 0;
+    }
+}
+#else
+
+#define BASE(seg)   ((seg)->base)   /* use segment address in real mode */
+/* for non-protected mode configurations, any generated code is optimized out */
+#define seg_pm_attach(seg, type)    1
+#define seg_pm_detach(seg)
+#endif
 
 // Minimal segment size to be useful
 // (= size of the smallest allocation)
@@ -30,18 +82,19 @@ static list_s _seg_free;
 
 // Split segment if enough large
 
-static segment_s * seg_split (segment_s * s1, segext_t size0)
+static segment_s * seg_split (segment_s * s1, SELEXT_T size0)
 {
-    segext_t size2 = s1->size - size0;
+    SELEXT_T size2 = s1->size - size0;
 
     if (size2 >= SEG_MIN_SIZE) {
 
         // TODO: use pool_alloc
-        segment_s * s2 = (segment_s *) heap_alloc (sizeof (segment_s), HEAP_TAG_SEG);
+        segment_s * s2 = (segment_s *) heap_alloc (sizeof (segment_s),
+            HEAP_TAG_SEG | HEAP_TAG_CLEAR);
         if (!s2)
             return 0;   // heap_alloc gives heap full message
 
-        s2->base = s1->base + size0;
+        BASE(s2) = BASE(s1) + size0;
         s2->size = size2;
         s2->flags = SEG_FLAG_FREE;
         s2->ref_count = 0;
@@ -61,22 +114,26 @@ static segment_s * seg_split (segment_s * s1, segext_t size0)
 
 // Get free segment
 
-static segment_s * seg_free_get (segext_t size0, word_t type)
+static segment_s * seg_free_get (SELEXT_T size0, word_t type)
 {
     // First get the smallest suitable free segment
 
     segment_s * best_seg  = 0;
-    segext_t best_size = 0xFFFF;
+    SELEXT_T best_size = (SELEXT_T)-1;
     list_s * n = _seg_free.next;
-    segext_t size00 = size0, incr = 0;
+    SELEXT_T size00 = size0, incr = 0;
 
     while (n != &_seg_free) {
         segment_s * seg = structof (n, segment_s, free);
-        segext_t size1 = seg->size;
+        SELEXT_T size1 = seg->size;
 
         if (type & SEG_FLAG_ALIGN1K)
-            size00 = size0 + ((~seg->base + 1) & ((1024 >> 4) - 1));
-        if ((seg->flags == SEG_FLAG_FREE) && (size1 >= size00) && (size1 < best_size)) {
+            size00 = size0 + ((~BASE(seg) + 1) & ((1024 >> 4) - 1));
+        if ((seg->flags == SEG_FLAG_FREE) && (size1 >= size00) && (size1 < best_size)
+#ifdef CONFIG_286_PMODE
+            && (!(type & SEG_FLAG_XMS) || (seg->addr & 0x000F0000))
+#endif
+                                                                    ) {
             best_seg  = seg;
             best_size = size1;
             incr = size00 - size0;
@@ -118,39 +175,67 @@ static void seg_merge (segment_s * s1, segment_s * s2)
 
 segment_s * seg_alloc_fixed (seg_t base, segext_t size, word_t type)
 {
-    segment_s * seg = heap_alloc(sizeof(segment_s),
-        HEAP_TAG_SEG | HEAP_TAG_CLEAR);
+    segment_s * seg = heap_alloc(sizeof(segment_s), HEAP_TAG_SEG | HEAP_TAG_CLEAR);
     if (!seg)
         return seg;
 
-    seg->base = base;
+    BASE(seg) = base;
     seg->size = size;
     seg->flags = SEG_FLAG_USED | type;
     seg->ref_count = 1;
+    if (!seg_pm_attach(seg, type)) {    /* allocate descriptor (no-op in real mode) */
+        heap_free(seg);
+        return 0;
+    }
     return seg;
 }
 
 #endif
 
-// Allocate segment
+// Allocate segment (size < 1M)
+// NOTE: May allocate from main memory or XMS in PM
 
 segment_s * seg_alloc (segext_t size, word_t type)
 {
     segment_s * seg = 0;
+
     seg = seg_free_get (size, type);
     if (seg && (type & SEG_FLAG_ALIGN1K))
-        seg->base += ((~seg->base + 1) & ((1024 >> 4) - 1));
+        BASE(seg) += ((~BASE(seg) + 1) & ((1024 >> 4) - 1));
+    if (seg && !seg_pm_attach(seg, type)) {
+        seg_free(seg);
+        seg = 0;
+    }
     return seg;
 }
+
+#ifdef CONFIG_286_PMODE
+// Allocate any size segment (>= 1M ok) from XMS only
+// Primarily used for ramdisk support, not for general use
+// NOTE: Can't use desc_limit, no support for accessing data outside xms_fmemcpy
+
+segment_s * seg_alloc_xms (selext_t size, word_t type)
+{
+    segment_s * seg = 0;
+
+    type |= SEG_FLAG_XMS;
+    seg = seg_free_get (size, type);
+    if (seg && !seg_pm_attach(seg, type)) {
+        seg_free(seg);
+        seg = 0;
+    }
+    return seg;
+}
+#endif
 
 
 // Free segment
 
 void seg_free (segment_s * seg)
 {
+    seg_pm_detach(seg);     /* release GDT descriptor (no-op in real mode) */
 #ifdef CONFIG_ROMFS_FS
-    // Handle segments created outside of the memory allocator
-    // (via seg_alloc_fixed).
+    // Handle segments created outside of the memory allocator (via seg_alloc_fixed).
     if (seg->all.prev == NULL && seg->all.next == NULL) {
         heap_free(seg);
         return;
@@ -170,7 +255,7 @@ void seg_free (segment_s * seg)
     list_s * p = seg->all.prev;
     if (&_seg_all != p) {
         segment_s * prev = structof (p, segment_s, all);
-        if ((prev->flags == SEG_FLAG_FREE) && (prev->base + prev->size == seg->base)) {
+        if ((prev->flags == SEG_FLAG_FREE) && (BASE(prev) + prev->size == BASE(seg))) {
             list_remove (&(prev->free));
             seg_merge (prev, seg);
             i = _seg_free.prev;
@@ -183,7 +268,7 @@ void seg_free (segment_s * seg)
     list_s * n = seg->all.next;
     if (n != &_seg_all) {
         segment_s * next = structof (n, segment_s, all);
-        if ((next->flags == SEG_FLAG_FREE) && (seg->base + seg->size == next->base)) {
+        if ((next->flags == SEG_FLAG_FREE) && (BASE(seg) + seg->size == BASE(next))) {
             list_remove (&(next->free));
             seg_merge (seg, next);
             i = _seg_free.prev;
@@ -221,8 +306,13 @@ void seg_put (segment_s * seg)
 segment_s * seg_dup (segment_s * src)
 {
     segment_s * dst = seg_free_get (src->size, src->flags);
-    if (dst)
+    if (dst) {
+        if (!seg_pm_attach(dst, src->flags)) {
+            seg_free(dst);
+            return 0;
+        }
         fmemcpyw(0, dst->base, 0, src->base, src->size << 3);
+    }
     return dst;
 }
 
@@ -233,6 +323,7 @@ void mm_get_usage (struct mem_usage *mu)
 {
     unsigned int free = 0;
     unsigned int used = 0;
+    unsigned long xmsused = 0;
 
     list_s * n = _seg_all.next;
 
@@ -240,13 +331,17 @@ void mm_get_usage (struct mem_usage *mu)
         segment_s * seg = structof (n, segment_s, all);
 
         /*if (used) printk ("seg %X: size %u used %u count %u\n",
-            seg->base, seg->size, seg->flags, seg->ref_count);*/
+            BASE(seg), seg->size, seg->flags, seg->ref_count);*/
 
-        if (seg->flags == SEG_FLAG_FREE)
-            free += seg->size;
-        else
-            used += seg->size;
-
+        if (seg->addr & 0xFFFF0000) {
+            if (seg->flags != SEG_FLAG_FREE)
+                xmsused += seg->size;
+        } else {
+            if (seg->flags == SEG_FLAG_FREE)
+                free += seg->size;
+            else
+                used += seg->size;
+        }
         n = seg->all.next;
     }
 
@@ -256,7 +351,7 @@ void mm_get_usage (struct mem_usage *mu)
     mu->main_free = ((free + 31) >> 6);
     mu->main_used = ((used + 31) >> 6);
 #ifdef CONFIG_FS_XMS
-    mu->xms_used = xms_alloc_ptr - KBYTES(XMS_START_ADDR);
+    mu->xms_used = xms_alloc_ptr - KBYTES(XMS_START_ADDR) + (xmsused >> 6);
     mu->xms_free = SETUP_XMS_KBYTES - mu->xms_used;
 #else
     mu->xms_free = 0;
@@ -272,12 +367,12 @@ static int set_brk(segoff_t brk, int increment)
     segoff_t newbrk = brk + increment;
     segoff_t stacklow;
 
-    /***unsigned int memfree, memused;
-    mm_get_usage(&memfree, &memused);
+    /***static struct mem_usage m;
+    mm_get_usage(&m);
     printk("brk(%P): new %x, edat %x, ebrk %x, free %x sp %x, eseg %x, %d/%dK\n",
         newbrk, current->t_enddata, current->t_endbrk,
         current->t_regs.sp - current->t_endbrk,
-        current->t_regs.sp, current->t_endseg, memfree, memused);***/
+        current->t_regs.sp, current->t_endseg, m.main_free, m.main_used);***/
 
     if ((increment > 0 && newbrk < brk) || (increment < 0 && newbrk > brk)) {
         printk("(%P)SBRK %d FAIL, OUT OF HEAP (address wrap)\n", increment);
@@ -332,7 +427,8 @@ int sys_sbrk(int increment, segoff_t *pbrk)
 }
 
 // allocate memory for process, return segment
-int sys_fmemalloc(int paras, unsigned short *pseg)
+// size > 64K require PM-incompatible segment arithmetic or 32-bit instruction prefix
+int sys_fmemalloc(unsigned int paras, unsigned short *pseg)
 {
     segment_s *seg;
     int err;
@@ -340,7 +436,13 @@ int sys_fmemalloc(int paras, unsigned short *pseg)
     err = verify_area(VERIFY_WRITE, pseg, sizeof(*pseg));
     if (err)
         return err;
-    seg = seg_alloc((segext_t)paras, SEG_FLAG_FDAT);
+    if (paras == 0)
+        return -EINVAL;
+#ifdef CONFIG_286_PMODE
+    if (paras > 0x1000)
+        printk("fmemalloc: warning size %uK > 64K\n", paras >> 6);
+#endif
+    seg = seg_alloc(paras, SEG_FLAG_FDAT);
     if (!seg) {
         debug_brk("(%P)FMEMALLOC %ld FAIL\n", (unsigned long)paras << 4);
         return -ENOMEM;
@@ -399,17 +501,18 @@ int seg_verify_area(pid_t pid, seg_t base, segoff_t offset)
         segment_s * seg = structof (n, segment_s, all);
 
         if (seg->pid == pid && seg->base == base)
-            return offset <= (seg->size << 4);
+            return offset <= ((unsigned long)seg->size << 4);
         n = seg->all.next;
     }
     return 0;
 }
 
-void INITPROC seg_add(seg_t start, seg_t end)
+void INITPROC seg_add(SELEXT_T start, SELEXT_T end)
 {
-    segment_s * seg = (segment_s *) heap_alloc (sizeof (segment_s), HEAP_TAG_SEG);
+    segment_s * seg = (segment_s *) heap_alloc (sizeof (segment_s),
+        HEAP_TAG_SEG | HEAP_TAG_CLEAR);
     if(seg) {
-        seg->base = start;
+        BASE(seg) = start;
         seg->size = end - start;
         seg->flags = SEG_FLAG_FREE;
         seg->ref_count = 0;

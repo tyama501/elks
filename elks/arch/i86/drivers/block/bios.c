@@ -8,8 +8,8 @@
 #include <linuxmt/genhd.h>
 #include <linuxmt/biosparm.h>
 #include <linuxmt/major.h>
-#include <linuxmt/memory.h>
 #include <linuxmt/kernel.h>
+#include <linuxmt/segment.h>
 #include <linuxmt/kdev_t.h>
 #include <linuxmt/debug.h>
 #include <linuxmt/sched.h>
@@ -121,6 +121,10 @@ notMFM1024:
     BD_ES = seg;
     BD_BP = offset;
 #else
+
+    /* return special error on BIOS cylinder overflow */
+    if (cylinder > 1023 && drivep->cylinders > 1024)
+        return -1;
 
 #if RESET_DISK_CHG
     static unsigned last = 0;

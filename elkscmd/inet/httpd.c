@@ -49,7 +49,7 @@ char* get_mime_type(char *name)
 
     dot = strrchr( name, '.' );
     if ( dot == (char*) 0 )
-        return "text/plain";
+        return "application/octet-stream";
     if ( strcmp( dot, ".html" ) == 0 || strcmp( dot, ".htm" ) == 0 )
         return "text/html";
     if ( strcmp( dot, ".jpg" ) == 0 || strcmp( dot, ".jpeg" ) == 0 )
@@ -64,7 +64,7 @@ char* get_mime_type(char *name)
         return "model/vrml";
     if ( strcmp( dot, ".midi" ) == 0 || strcmp( dot, ".mid" ) == 0 )
         return "audio/midi";
-    return "text/plain";
+    return "application/octet-stream";
 }
 
 void send_header(int fd, char *ct)
@@ -160,9 +160,8 @@ int main(int argc, char **argv)
         errmsg("http: SO_REUSEADDR");
 
     /* set small listen buffer to save ktcp memory */
-    ret = SO_LISTEN_BUFSIZ;
-    if (setsockopt(listen_sock, SOL_SOCKET, SO_RCVBUF, &ret, sizeof(int)) < 0)
-        errmsg("httpd: SO_RCVBUF");
+    if (setsockopt(listen_sock, SOL_SOCKET, SO_NOBUFFER, NULL, 0) < 0)
+        errmsg("httpd: SO_NOBUFFER");
 
     localadr.sin_family = AF_INET;
     localadr.sin_port = htons(DEF_PORT);

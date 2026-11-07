@@ -89,7 +89,7 @@ build_rom_swan()
 {
     cleanup
     cp swan.config .config
-    make
+    make -j1
     mv image/rom.wsc image/rom-swan.wsc
     rm -f image/romfs.bin
 }
@@ -137,6 +137,7 @@ build_ibm_fast
 build_pc98
 build_pc98_1200
 build_pc98_1440
+build_ibm_fast
 ./buildext.sh microwindows
 build_rom_8018x
 build_rom_necv25

@@ -18,6 +18,7 @@
 #include "tcp_cb.h"
 #include "tcpdev.h"
 #include "tcp_output.h"
+#include "netconf.h"
 
 static struct tcpcb_list_s	*tcpcbs;
 
@@ -119,9 +120,26 @@ void tcpcb_remove_cb(struct tcpcb_s *cb)
 	}
 }
 
+void tcpcb_remove_all(void)
+{
+    struct tcpcb_list_s *n = tcpcbs, *next;
+    while (n) {
+	next = n->next;
+	if (n->tcpcb.remaddr != 0)
+	    tcpcb_remove(n);
+	n = next;
+    }
+}
+
 void tcpcb_remove(struct tcpcb_list_s *n)
 {
     struct tcpcb_list_s *next = n->next;
+
+    /* prevent dangling pointers when tcpdump/netconf client disconnects */
+    if (&n->tcpcb == capture_cb)
+	capture_cb = NULL;
+    if (&n->tcpcb == pending_icmp_cb)
+	pending_icmp_cb = NULL;
 
     debug_tcp("tcp: REMOVING control block %x\n", n);
     debug_mem("Free CB\n");
@@ -268,41 +286,57 @@ void tcpcb_expire_timeouts(void)
     }
 }
 
-void tcpcb_push_data(void)
+/* inform kernel of data available, only when changed unless force */
+void tcpcb_push_data(int force)
 {
     struct tcpcb_list_s *n;
 
     for (n=tcpcbs; n; n=n->next)
-	if (n->tcpcb.bytes_to_push > 0)
+	if (n->tcpcb.bytes_to_push > 0 &&
+	    (force || n->tcpcb.bytes_to_push != n->tcpcb.bytes_notified))
 	    notify_data_avail(&n->tcpcb);
 }
 
-/* There must be free space greater-equal than len or will wrap*/
+/* There must be free space greater-equal than len */
 void tcpcb_buf_write(struct tcpcb_s *cb, unsigned char *data, int len)
 {
-    int tail = cb->buf_tail;
+    unsigned int tail = cb->buf_tail;
+    unsigned int ulen = len;
+    unsigned int n = cb->buf_size - tail;	/* room before the wrap */
 
-    while (--len >= 0) {
-	cb->buf_base[tail++] = *data++;
-	if (tail >= cb->buf_size)
-	    tail = 0;
-	cb->buf_used++;
+    if (ulen < n)
+	n = ulen;
+    memcpy(cb->buf_base + tail, data, n);
+    tail += n;
+    if (tail >= cb->buf_size)
+	tail = 0;
+    if (ulen > n) {				/* wrapped */
+	memcpy(cb->buf_base, data + n, ulen - n);
+	tail = ulen - n;
     }
     cb->buf_tail = tail;
+    cb->buf_used += ulen;
 }
 
 /* same here */
 void tcpcb_buf_read(struct tcpcb_s *cb, unsigned char *data, int len)
 {
-    int head = cb->buf_head;
+    unsigned int head = cb->buf_head;
+    unsigned int ulen = len;
+    unsigned int n = cb->buf_size - head;
 
-    while (--len >= 0) {
-	*data++= cb->buf_base[head++];
-	if (head >= cb->buf_size)
-	    head = 0;
-	cb->buf_used--;
+    if (ulen < n)
+	n = ulen;
+    memcpy(data, cb->buf_base + head, n);
+    head += n;
+    if (head >= cb->buf_size)
+	head = 0;
+    if (ulen > n) {
+	memcpy(data + n, cb->buf_base, ulen - n);
+	head = ulen - n;
     }
     cb->buf_head = head;
+    cb->buf_used -= ulen;
 }
 
 /* congestion avoidance: increment cwnd once per rtt */

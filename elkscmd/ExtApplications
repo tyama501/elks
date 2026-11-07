@@ -28,6 +28,13 @@
 # ------------- ----------------------------------------------------------
 #
 # ia16 builds
+# ELKSWeb is installed on HD images only (no floppy-size tags).
+ELKSWeb/build/elksweb                              :elksweb
+ELKSWeb/share/welcome.htm ::root/welcome.htm        :elksweb
+ELKSWeb/share/elksweb.gif ::root/elksweb.gif        :elksweb
+ELKSWeb/share/logo-source.txt ::root/logo-src.txt   :elksweb
+ELKSWeb/COPYING ::lib/elksweb/COPYING               :elksweb
+ELKSWeb/font/COPYING ::lib/elksweb/font-copying     :elksweb
 microwindows/src/bin/nano-x                         :nanox  :1232c :1440k
 microwindows/src/bin/nxcalc                         :nanox  :1232c :1440k
 microwindows/src/bin/nxclock                        :nanox  :1232c :1440k
@@ -37,6 +44,7 @@ microwindows/src/bin/nxterm                         :nanox  :1232c :1440k
 microwindows/src/bin/nxtetris                       :nanox  :1232c :1440k
 microwindows/src/bin/nxworld                        :nanox              :2880k
 microwindows/src/images/demos/nanox/nxworld.map ::lib/nxworld.map :nanox :2880k
+microwindows/src/bin/nxedit                         :nanox              :2880k
 microwindows/src/bin/nxdsktop                       :nanox  :1232c
 microwindows/src/bin/nxjpeg                         :nanox  :1232c
 microwindows/src/bin/nxmsg                          :nanox  :1232c
@@ -44,6 +52,20 @@ microwindows/src/bin/nxselect                       :nanox  :1232c
 microwindows/src/demos/nanox/images/girl1.jpg ::root/girl1.jpg :nanox
 microwindows/src/demos/nanox/images/earth.jpg ::root/earth.jpg :nanox
 dflat/memopad                                       :dflat              :2880k
+Gem-elks/build/bin/gem                              :gem
+Gem-elks/build/bin/gemdesk                          :gem
+Gem-elks/build/bin/gemclock                         :gem
+Gem-elks/build/bin/gemcalc                          :gem
+Gem-elks/build/bin/gemview                          :gem
+Gem-elks/build/bin/gemirc                           :gem
+Gem-elks/assets/lib/gemsys/gem.rsc ::lib/gemsys/gem.rsc	:gem
+Gem-elks/assets/lib/gemsys/desktop.rsc ::lib/gemsys/desktop.rsc	:gem
+Gem-elks/assets/lib/gemsys/desktop.inf ::lib/gemsys/desktop.inf	:gem
+Gem-elks/assets/lib/gemsys/deskhi.icn ::lib/gemsys/deskhi.icn	:gem
+Gem-elks/assets/lib/gemsys/desklo.icn ::lib/gemsys/desklo.icn	:gem
+Gem-elks/assets/lib/gemsys/sysfont.08 ::lib/gemsys/sysfont.08	:gem
+Gem-elks/assets/lib/gemsys/sysfont.14 ::lib/gemsys/sysfont.14	:gem
+Gem-elks/assets/lib/gemsys/sysfont.16 ::lib/gemsys/sysfont.16	:gem
 # sample ELKS OWC/C86 files
 ../elkscmd/basic/basic.os2                          :owc                :2880k
 ../elkscmd/fsck_dos/fsck-dos.os2                    :owc                :2880k
@@ -52,6 +74,8 @@ dflat/memopad                                       :dflat              :2880k
 # external OWC builds
 elkirc/elkirc                                       :elkirc             :2880k
 elkirc/man/elkirc.1     ::lib/man1/elkirc.1         :elkirc             :2880k
+ELKS-Digger/elks/digger                             :elksdigger     :1440k
+ELKS-Digger/elks/digtitle.bmp ::lib/digtitle.bmp    :elksdigger         :2880k
 elksdoom/elksdoom       ::bin/doom                  :elksdoom
 elksdoom/elksdoom.wad   ::lib/elksdoom.wad          :elksdoom
 ngircd-elks/ngircd.os2  ::bin/ngircd                :ngircd
